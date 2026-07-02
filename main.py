@@ -301,7 +301,7 @@ class App(ctk.CTk):
         # 포맷 드롭다운 + 안내문
         ctk.CTkLabel(self, text="출력 포맷 / 품질:", anchor="w").pack(fill="x", **pad)
         self.format_menu = ctk.CTkOptionMenu(self, values=FORMAT_LABELS)
-        self.format_menu.set(FORMAT_LABELS[0])  # 기본값: 재인코딩 없음
+        self.format_menu.set(FORMAT_LABELS[1])  # 기본값: m4a (아이폰 등 호환성 좋음)
         self.format_menu.pack(fill="x", padx=20, pady=(4, 0))
         ctk.CTkLabel(
             self, text=FORMAT_HELP, justify="left", anchor="w",
