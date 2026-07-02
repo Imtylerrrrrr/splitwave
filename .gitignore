@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# ffmpeg (CI에서 자동 다운로드)
+ffmpeg.exe
+ffmpeg
