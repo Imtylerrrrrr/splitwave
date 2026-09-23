@@ -1,0 +1,6 @@
+# 풀 버전(스템 분리 포함). demucs 4.1.0+는 torchaudio 불필요.
+# PyPI의 Windows/macOS torch 휠은 CPU 빌드라 별도 인덱스 없이 설치된다.
+-r requirements.txt
+demucs>=4.1.0
+torch>=2.1
+numpy

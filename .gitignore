@@ -12,3 +12,10 @@ dist/
 # ffmpeg (CI에서 자동 다운로드)
 ffmpeg.exe
 ffmpeg
+
+# 풀 빌드용 Demucs 가중치 캐시 (CI가 만든다)
+hf_home/
+
+# macOS / pytest
+.DS_Store
+.pytest_cache/
