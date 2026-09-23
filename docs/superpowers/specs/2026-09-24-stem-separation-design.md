@@ -178,6 +178,21 @@ CPU 전용 휠을 써서 CUDA 수 GB를 피한다. 정확한 버전 핀은 구�
 3. **풀 모드 수동 확인**: 실제 곡 하나 → 5개 스템 저장, 키 +2 + MP3 조합 1회.
 4. **CI**: 두 잡 모두 초록. 풀 zip을 윈도우에서 풀어 실행, 스템 탭 동작 확인 (사용자가 수행).
 
+## 계획 작성 중 확인된 사실 → 설계 수정 (2026-09-24)
+
+demucs 4.1.0 휠의 METADATA와 `api.py`·`hf.py`·`audio.py`를 직접 읽고 확인한 내용. 위 본문과 다르면 **이 절이 우선**.
+
+- **torchaudio 불필요.** demucs 4.1.0 의존성: `torch>=2.1, einops, julius, lameenc, sphn, huggingface-hub, safetensors, pyyaml, tqdm, numpy`. PyPI의 Windows/macOS torch 휠은 CPU 빌드라 `--extra-index-url` 없이 `pip install torch`면 된다. → `requirements-stems.txt`는 `demucs>=4.1.0`, `torch>=2.1`, `numpy`.
+- **가중치는 HuggingFace Hub** 저장소 `adefossez/HTDemucs-6s`에서 `htdemucs_6s.yaml` + `5c90dfd2.safetensors`를 `hf_hub_download`로 받는다. 캐시 위치는 `HF_HOME` (기본 `~/.cache/huggingface`). → 풀 exe 번들은 `TORCH_HOME`이 아니라 **`HF_HOME`을 번들 폴더(`hf_home/`)로, `HF_HUB_OFFLINE=1`**로 설정. demucs import 전에.
+- **입력 디코드는 우리 ffmpeg로 직접.** `separate_audio_file`은 sphn → PATH의 ffmpeg/ffprobe 순으로 시도하는데, 번들 ffmpeg는 PATH에 없고 ffprobe는 번들도 안 된다. → `ffmpeg -f f32le -ac 2 -ar 44100 -` 파이프로 디코드해 `(2, n)` 텐서를 만들고 **`Separator.separate_tensor(wav, 44100)`** 호출. 따라서 **스템 분리에는 ffmpeg가 항상 필요** (mp3/키조정 여부와 무관).
+- **mp3 저장은 `demucs.api.save_audio(tensor, "x.mp3", samplerate, bitrate=320)`** — lameenc 내장이라 ffmpeg 불필요. wav도 같은 함수. ffmpeg는 키 조정 재인코딩에만 쓴다.
+- 진행률 콜백 dict 키 확인: `state`("start"/"end"), `segment_offset`, `audio_length`(샘플 수), `model_idx_in_bag`, `shift_idx`. `segment_offset / audio_length`로 계산, 1.0으로 clamp.
+- `Separator`는 `samplerate`, `audio_channels`, `sources` 프로퍼티 제공. `htdemucs_6s`의 `sources` = `drums, bass, other, vocals, guitar, piano`.
+- 파이썬: CI는 3.12. 맥 개발 venv도 **3.12로 재생성** (현재 3.14 — torch 휠 호환 확실치 않음).
+- `stems_available()`은 `main.py`가 아니라 `stems_page.py`에 둔다 (유일한 사용처).
+- 동시 실행 방지: 상대 탭 버튼을 비활성화하는 대신, 양쪽 시작 시 `app.busy`를 검사해 "다른 작업이 진행 중이에요" 경고. 효과 동일, 위젯 간 참조 없음.
+- 빌드 검증용 `--selftest` 플래그를 `main.py`에 추가: GUI 없이 ffmpeg 탐색 + (풀이면) 번들 캐시에서 모델 로드 후 exit 0. CI가 빌드 직후 exe로 실행해 번들이 실제로 동작하는지 확인한다.
+
 ## 범위 밖
 
 - GPU 지원
