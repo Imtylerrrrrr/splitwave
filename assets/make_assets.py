@@ -66,14 +66,16 @@ def render(with_bg):
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
 
-def write_svg(path):
+def write_svg(path, color=None):
+    """color 를 주면 선·글자 색을 바꿔 쓴다 (README 라이트 모드용 어두운 버전)."""
+    color = color or LINE
     parts = [f"M {X0} {Y_MID} L {X_SPLIT} {Y_MID}"]
     for y_end in Y_ENDS:
         parts.append(f"M {X_SPLIT} {Y_MID} C {C1_X} {Y_MID}, {C2_X} {y_end}, {X_END} {y_end}")
     d = " ".join(parts)
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3200 1024" width="400" height="128">
-  <path d="{d}" fill="none" stroke="{LINE}" stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="{TEXT}">splitwave</text>
+  <path d="{d}" fill="none" stroke="{color}" stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="{color}">splitwave</text>
 </svg>
 """
     with open(path, "w", encoding="utf-8") as f:
@@ -146,6 +148,7 @@ def main():
     mark = render(with_bg=False)
     mark.resize((128, 128), Image.LANCZOS).save(os.path.join(HERE, "mark.png"))
     write_svg(os.path.join(HERE, "logo.svg"))
+    write_svg(os.path.join(HERE, "logo-light.svg"), color="#111827")  # 밝은 배경용
     write_theme(os.path.join(HERE, "theme.json"))
     write_preview(mark, "/tmp/splitwave-preview.png")
 

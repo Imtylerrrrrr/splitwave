@@ -1,4 +1,7 @@
-<img src="assets/logo.svg" alt="splitwave" height="64">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo.svg">
+  <img src="assets/logo-light.svg" alt="splitwave" height="64">
+</picture>
 
 유튜브 링크나 음원 파일을 넣으면 **최고 음질로 받고, 키를 바꾸고, 악기별 스템(보컬·드럼·기타·건반·베이스)으로 분리**해 주는 Windows 프로그램입니다. 합주 연습용 MR 만들 때 쓰려고 만들었어요.
 
@@ -14,7 +17,7 @@
 
 → [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases)에서 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
 
-> **처음 실행하면 Windows가 "알 수 없는 게시자" 경고를 띄워요.** 개인이 만든 프로그램이라 유료 서명 인증서가 없어서 그래요. **"추가 정보 → 실행"**을 누르면 됩니다.
+> **처음 실행하면 Windows가 "알 수 없는 게시자" 경고를 띄워요.** 개인이 만든 프로그램이라 유료 서명 인증서가 없어서 그래요. "**추가 정보 → 실행**"을 누르면 됩니다.
 
 ## 사용법
 
