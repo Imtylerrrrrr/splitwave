@@ -89,14 +89,19 @@ class StemsPage(ctk.CTkFrame):
         self.file_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
         ctk.CTkLabel(self, text="저장할 스템:", anchor="w").pack(fill="x", **pad)
-        grid = ctk.CTkFrame(self, fg_color="transparent")
-        grid.pack(fill="x", padx=20, pady=(4, 0))
+        chip_row = ctk.CTkFrame(self, fg_color="transparent")
+        chip_row.pack(fill="x", padx=20, pady=(4, 0))
         self.stem_vars: dict[str, ctk.BooleanVar] = {}
-        for i, name in enumerate(STEM_ORDER):
+        for name in STEM_ORDER:
             var = ctk.BooleanVar(value=name in DEFAULT_STEMS)
             self.stem_vars[name] = var
-            ctk.CTkCheckBox(grid, text=STEM_LABELS[name], variable=var).grid(
-                row=i // 3, column=i % 3, sticky="w", padx=(0, 16), pady=2)
+            chip = ctk.CTkButton(
+                chip_row, text=STEM_LABELS[name], height=32, corner_radius=16, width=0,
+                font=ctk.CTkFont(size=13), border_width=1,
+                command=lambda v=var: v.set(not v.get()))
+            chip.pack(side="left", padx=(0, 8))
+            var.trace_add("write", lambda *_, c=chip, v=var: self._style_chip(c, v.get()))
+            self._style_chip(chip, var.get())
         ctk.CTkLabel(
             self, text="기타·건반 분리는 보컬·드럼보다 품질이 낮을 수 있어요.",
             justify="left", anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
@@ -143,6 +148,16 @@ class StemsPage(ctk.CTkFrame):
     # ── 유틸 ──
     def set_status(self, text: str):
         self.status_label.configure(text=text)
+
+    @staticmethod
+    def _style_chip(chip, selected: bool):
+        """스템 칩 모양: 선택 = 흰 배경, 해제 = 테두리만."""
+        if selected:
+            chip.configure(fg_color="#F3F4F6", hover_color="#D1D5DB",
+                           text_color="#0B1220", border_color="#F3F4F6")
+        else:
+            chip.configure(fg_color="transparent", hover_color="#374151",
+                           text_color="#F9FAFB", border_color="#6B7280")
 
     def selected_stems(self) -> list[str]:
         from separator import STEM_ORDER
