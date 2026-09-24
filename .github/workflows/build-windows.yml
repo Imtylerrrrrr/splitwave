@@ -1,6 +1,7 @@
 name: Build Windows EXE
 
 # main.py 를 윈도우 러너에서 PyInstaller 로 빌드한다.
+#  - ffmpeg: 오디오 전용 ffmpeg 를 공식 소스에서 정적 빌드 (tools/ffmpeg/build.sh). lite/full 이 이걸 번들한다.
 #  - lite: 다운로드만. 단일 exe (ffmpeg 번들)
 #  - full: 스템 분리 포함. torch 가 커서 onedir 폴더를 zip 으로 (모델 가중치 hf_home 포함)
 # 맥에서는 gh run download 로 내려받으면 된다.
@@ -11,7 +12,51 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 오디오 전용 ffmpeg 를 공식 소스에서 정적 빌드한다 (tools/ffmpeg/build.sh).
+  # build.sh 가 바뀌지 않으면 캐시에서 꺼내 스모크 테스트만 다시 돈다.
+  build-ffmpeg:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: tools/ffmpeg/out/ffmpeg.exe
+          key: ffmpeg-audio-${{ hashFiles('tools/ffmpeg/build.sh') }}
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: python mingw-w64-x86_64-binutils
+
+      - name: Build audio-only ffmpeg
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          pacman -S --noconfirm --needed make diffutils \
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm mingw-w64-x86_64-pkgconf \
+            mingw-w64-x86_64-zlib mingw-w64-x86_64-lame mingw-w64-x86_64-opus
+          bash tools/ffmpeg/build.sh
+
+      - name: Smoke test + dependency check
+        shell: msys2 {0}
+        run: |
+          bash tools/ffmpeg/smoke.sh tools/ffmpeg/out/ffmpeg.exe
+          dlls="$(objdump -p tools/ffmpeg/out/ffmpeg.exe | grep "DLL Name" | sed 's/.*DLL Name: //')"
+          echo "$dlls"
+          extra="$(echo "$dlls" | grep -viE '^(kernel32|user32|advapi32|shell32|ole32|oleaut32|psapi|bcrypt|ncrypt|crypt32|secur32|ws2_32|iphlpapi|msvcrt|ucrtbase|api-ms-win-.*)\.dll$' || true)"
+          if [ -n "$extra" ]; then echo "non-system DLL dependency: $extra"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-audio
+          path: tools/ffmpeg/out/ffmpeg.exe
+          if-no-files-found: error
+
   build-lite:
+    needs: build-ffmpeg
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,14 +69,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Download ffmpeg (static build)
+      - name: Get audio-only ffmpeg (built by build-ffmpeg job)
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-audio
+          path: .
+
+      - name: Report ffmpeg size
         shell: pwsh
-        run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
-          $exe = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $exe.FullName -Destination ffmpeg.exe
+        run: Get-Item ffmpeg.exe | Select-Object Name, Length
 
       - name: Build EXE (PyInstaller, onefile)
         shell: pwsh
@@ -62,6 +108,7 @@ jobs:
           if-no-files-found: error
 
   build-full:
+    needs: build-ffmpeg
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,14 +121,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-stems.txt pyinstaller
 
-      - name: Download ffmpeg (static build)
+      - name: Get audio-only ffmpeg (built by build-ffmpeg job)
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-audio
+          path: .
+
+      - name: Report ffmpeg size
         shell: pwsh
-        run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
-          $exe = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $exe.FullName -Destination ffmpeg.exe
+        run: Get-Item ffmpeg.exe | Select-Object Name, Length
 
       - name: Prefetch Demucs weights into hf_home
         shell: pwsh
