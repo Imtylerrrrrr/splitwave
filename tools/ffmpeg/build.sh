@@ -98,7 +98,7 @@ esac
   || { tail -n 30 "$SRC_ROOT/configure.log" >&2; fail "configure failed (full log: $SRC_ROOT/configure.log)"; }
 grep -i 'warning' "$SRC_ROOT/configure.log" || true
 
-make -j"$(ncpu)" ffmpeg > "$SRC_ROOT/make.log" 2>&1 \
+make -j"$(ncpu)" "$EXE" > "$SRC_ROOT/make.log" 2>&1 \
   || { tail -n 30 "$SRC_ROOT/make.log" >&2; fail "make failed (full log: $SRC_ROOT/make.log)"; }
 
 # ffmpeg_g is the unstripped binary; ffmpeg is already stripped by the Makefile, strip again to be sure.
