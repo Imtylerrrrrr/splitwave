@@ -200,7 +200,7 @@ class StemsPage(ctk.CTkFrame):
             return
         stems = self.selected_stems()
         if not stems:
-            messagebox.showwarning("안내", "저장할 스템을 하나 이상 체크해 주세요.")
+            messagebox.showwarning("안내", "저장할 스템을 하나 이상 선택해 주세요.")
             return
         if not self.app.ffmpeg_path:
             messagebox.showerror("FFmpeg 없음",
