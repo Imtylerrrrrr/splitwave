@@ -21,3 +21,8 @@ def test_theme_json_recolored():
         text = f.read()
     json.loads(text)
     assert "#3B8ED0" not in text.upper()
+
+
+def test_theme_json_has_no_teal():
+    with open(os.path.join(ASSETS, "theme.json"), encoding="utf-8") as f:
+        assert "#2DD4BF" not in f.read().upper()

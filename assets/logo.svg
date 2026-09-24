@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3200 1024" width="400" height="128">
-  <path d="M 180 512 L 430 512 M 430 512 C 600 512, 680 332, 844 332 M 430 512 C 600 512, 680 452, 844 452 M 430 512 C 600 512, 680 572, 844 572 M 430 512 C 600 512, 680 692, 844 692" fill="none" stroke="#2DD4BF" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 180 512 L 430 512 M 430 512 C 600 512, 680 332, 844 332 M 430 512 C 600 512, 680 452, 844 452 M 430 512 C 600 512, 680 572, 844 572 M 430 512 C 600 512, 680 692, 844 692" fill="none" stroke="#F9FAFB" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="#F9FAFB">splitwave</text>
 </svg>

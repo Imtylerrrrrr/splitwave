@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SIZE = 1024
 SCALE = 4
 BG = "#111827"
-ACCENT = "#2DD4BF"
+LINE = "#F9FAFB"
 TEXT = "#F9FAFB"
 RADIUS = 220
 STROKE = 56
@@ -43,15 +43,15 @@ def draw_mark(draw, s):
     r = w / 2
 
     def dot(x, y):
-        draw.ellipse((x * s - r, y * s - r, x * s + r, y * s + r), fill=ACCENT)
+        draw.ellipse((x * s - r, y * s - r, x * s + r, y * s + r), fill=LINE)
 
-    draw.line((X0 * s, Y_MID * s, X_SPLIT * s, Y_MID * s), fill=ACCENT, width=round(w))
+    draw.line((X0 * s, Y_MID * s, X_SPLIT * s, Y_MID * s), fill=LINE, width=round(w))
     dot(X0, Y_MID)
     dot(X_SPLIT, Y_MID)
     for y_end in Y_ENDS:
         ctrl = branch_ctrl(y_end)
         pts = [bezier(*ctrl, i / STEPS) for i in range(STEPS + 1)]
-        draw.line([(x * s, y * s) for x, y in pts], fill=ACCENT, width=round(w))
+        draw.line([(x * s, y * s) for x, y in pts], fill=LINE, width=round(w))
         for x, y in pts:
             dot(x, y)
 
@@ -72,7 +72,7 @@ def write_svg(path):
         parts.append(f"M {X_SPLIT} {Y_MID} C {C1_X} {Y_MID}, {C2_X} {y_end}, {X_END} {y_end}")
     d = " ".join(parts)
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3200 1024" width="400" height="128">
-  <path d="{d}" fill="none" stroke="{ACCENT}" stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="{d}" fill="none" stroke="{LINE}" stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="{TEXT}">splitwave</text>
 </svg>
 """
@@ -81,14 +81,26 @@ def write_svg(path):
 
 
 THEME_MAP = {
-    "#3B8ED0": "#2DD4BF",
-    "#1F6AA5": "#2DD4BF",
-    "#36719F": "#14B8A6",
-    "#144870": "#0D9488",
-    "#3a7ebf": "#2DD4BF",
-    "#325882": "#0D9488",
-    "#1f538d": "#2DD4BF",
-    "#14375e": "#0D9488",
+    "#3B8ED0": "#F3F4F6",
+    "#1F6AA5": "#F3F4F6",
+    "#36719F": "#D1D5DB",
+    "#144870": "#9CA3AF",
+    "#3a7ebf": "#F3F4F6",
+    "#325882": "#9CA3AF",
+    "#1f538d": "#F3F4F6",
+    "#14375e": "#9CA3AF",
+}
+
+
+# 흑백 팔레트: 흰 바탕 위엔 어두운 글자, 회색 바탕 위엔 흰 글자
+THEME_OVERRIDES = {
+    "CTkButton": {"fg_color": "#F3F4F6", "hover_color": "#D1D5DB", "text_color": "#0B1220"},
+    "CTkOptionMenu": {"fg_color": "#374151", "button_color": "#4B5563",
+                      "button_hover_color": "#6B7280", "text_color": "#F9FAFB"},
+    "CTkSegmentedButton": {"selected_color": "#6B7280", "selected_hover_color": "#9CA3AF",
+                           "text_color": "#F9FAFB"},
+    "CTkCheckBox": {"fg_color": "#F3F4F6", "hover_color": "#D1D5DB", "checkmark_color": "#0B1220"},
+    "CTkProgressBar": {"progress_color": "#F3F4F6"},
 }
 
 
@@ -99,7 +111,9 @@ def write_theme(path):
     for old, new in THEME_MAP.items():
         text = re.sub(re.escape(old), new, text, flags=re.IGNORECASE)
     theme = json.loads(text)
-    theme["CTkButton"]["text_color"] = ["#0B1220", "#0B1220"]
+    for widget, colors in THEME_OVERRIDES.items():
+        for key, value in colors.items():
+            theme[widget][key] = [value, value]
     with open(path, "w", encoding="utf-8") as f:
         json.dump(theme, f, indent=2)
         f.write("\n")
