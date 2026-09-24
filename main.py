@@ -15,7 +15,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import yt_dlp
 from common import (
-    find_ffmpeg, KEY_VALUES, KEY_HELP, parse_key, shift_pitch,
+    resource_path, find_ffmpeg, KEY_VALUES, KEY_HELP, parse_key, shift_pitch,
     is_youtube_url, is_playlist_url, translate_error,
     collect_filepaths, open_path,
 )
@@ -115,7 +115,7 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title("유튜브 오디오 다운로더")
-        self.geometry("560x700")
+        self.geometry("560x780")
         self.resizable(False, False)
 
         # 상태
@@ -124,7 +124,8 @@ class App(ctk.CTk):
         if not os.path.isdir(self.save_dir):
             self.save_dir = default_download_dir()
         self.ffmpeg_path = find_ffmpeg()
-        self.downloading = False
+        self.busy = False   # 다운로드/스템 분리 중 하나라도 돌고 있으면 True
+        self.folder_listeners = []   # 저장 폴더가 바뀌면 호출할 콜백들 (스템 탭이 등록)
 
         self._build_ui()
 
@@ -136,32 +137,42 @@ class App(ctk.CTk):
 
     # ── UI 구성 ──
     def _build_ui(self):
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=(6, 10))
+        dl_tab = self.tabview.add("다운로드")
+        stems_tab = self.tabview.add("스템 분리")
+        self._build_download_tab(dl_tab)
+
+        from stems_page import make_stems_tab   # 지연 import (라이트/풀 공통)
+        self.stems_page = make_stems_tab(stems_tab, self)
+
+    def _build_download_tab(self, root):
         pad = {"padx": 20, "pady": (10, 0)}
 
         ctk.CTkLabel(
-            self, text="🎵 유튜브 오디오 다운로더",
+            root, text="🎵 유튜브 오디오 다운로더",
             font=ctk.CTkFont(size=22, weight="bold"),
         ).pack(**pad)
 
         # URL 입력
-        ctk.CTkLabel(self, text="유튜브 링크를 붙여넣으세요:", anchor="w").pack(
+        ctk.CTkLabel(root, text="유튜브 링크를 붙여넣으세요:", anchor="w").pack(
             fill="x", **pad)
         self.url_entry = ctk.CTkEntry(
-            self, placeholder_text="https://www.youtube.com/watch?v=...")
+            root, placeholder_text="https://www.youtube.com/watch?v=...")
         self.url_entry.pack(fill="x", padx=20, pady=(4, 0))
 
         # 포맷 드롭다운 + 안내문
-        ctk.CTkLabel(self, text="출력 포맷 / 품질:", anchor="w").pack(fill="x", **pad)
-        self.format_menu = ctk.CTkOptionMenu(self, values=FORMAT_LABELS)
+        ctk.CTkLabel(root, text="출력 포맷 / 품질:", anchor="w").pack(fill="x", **pad)
+        self.format_menu = ctk.CTkOptionMenu(root, values=FORMAT_LABELS)
         self.format_menu.set(FORMAT_LABELS[1])  # 기본값: m4a (아이폰 등 호환성 좋음)
         self.format_menu.pack(fill="x", padx=20, pady=(4, 0))
         ctk.CTkLabel(
-            self, text=FORMAT_HELP, justify="left", anchor="w",
+            root, text=FORMAT_HELP, justify="left", anchor="w",
             font=ctk.CTkFont(size=11), text_color="gray70",
         ).pack(fill="x", padx=20, pady=(4, 0))
 
         # 키 조정 드롭다운 + 기존 파일 키 조정 버튼
-        key_row = ctk.CTkFrame(self, fg_color="transparent")
+        key_row = ctk.CTkFrame(root, fg_color="transparent")
         key_row.pack(fill="x", padx=20, pady=(10, 0))
         ctk.CTkLabel(key_row, text="키 조정 (반음):").pack(side="left")
         self.key_menu = ctk.CTkOptionMenu(key_row, values=KEY_VALUES, width=110)
@@ -173,12 +184,12 @@ class App(ctk.CTk):
             command=self.on_shift_existing_click,
         ).pack(side="right")
         ctk.CTkLabel(
-            self, text=KEY_HELP, justify="left", anchor="w",
+            root, text=KEY_HELP, justify="left", anchor="w",
             font=ctk.CTkFont(size=11), text_color="gray70",
         ).pack(fill="x", padx=20, pady=(4, 0))
 
         # 저장 폴더
-        folder_row = ctk.CTkFrame(self, fg_color="transparent")
+        folder_row = ctk.CTkFrame(root, fg_color="transparent")
         folder_row.pack(fill="x", padx=20, pady=(10, 0))
         ctk.CTkButton(
             folder_row, text="📁 저장 폴더 선택", width=130,
@@ -192,22 +203,22 @@ class App(ctk.CTk):
 
         # 다운로드 버튼
         self.download_btn = ctk.CTkButton(
-            self, text="⬇️ 다운로드", height=40,
+            root, text="⬇️ 다운로드", height=40,
             font=ctk.CTkFont(size=16, weight="bold"),
             command=self.on_download_click,
         )
         self.download_btn.pack(fill="x", padx=20, pady=(14, 0))
 
         # 진행률
-        self.progress = ctk.CTkProgressBar(self)
+        self.progress = ctk.CTkProgressBar(root)
         self.progress.set(0)
         self.progress.pack(fill="x", padx=20, pady=(14, 0))
-        self.status_label = ctk.CTkLabel(self, text="대기 중", anchor="w")
+        self.status_label = ctk.CTkLabel(root, text="대기 중", anchor="w")
         self.status_label.pack(fill="x", padx=20, pady=(6, 0))
 
         # 폴더 열기
         self.open_btn = ctk.CTkButton(
-            self, text="📂 폴더 열기", command=self.open_folder,
+            root, text="📂 폴더 열기", command=self.open_folder,
             fg_color="gray30", hover_color="gray25",
         )
         self.open_btn.pack(fill="x", padx=20, pady=(10, 16))
@@ -224,13 +235,16 @@ class App(ctk.CTk):
             # 마지막 사용 폴더 기억
             self.settings["last_dir"] = chosen
             save_settings(self.settings)
+            for cb in self.folder_listeners:
+                cb(chosen)
 
     def open_folder(self):
         open_path(self.save_dir)
 
     # ── 다운로드 시작 ──
     def on_download_click(self):
-        if self.downloading:
+        if self.busy:
+            messagebox.showinfo("안내", "다른 작업이 진행 중이에요. 끝난 뒤 다시 시도해 주세요.")
             return
 
         url = self.url_entry.get().strip()
@@ -272,7 +286,7 @@ class App(ctk.CTk):
             noplaylist = not whole
 
         # 별도 스레드에서 실행 → GUI 멈춤 방지
-        self.downloading = True
+        self.busy = True
         self.download_btn.configure(state="disabled", text="다운로드 중...")
         self.progress.set(0)
         self.set_status("영상 정보를 가져오는 중...")
@@ -327,12 +341,14 @@ class App(ctk.CTk):
             self.after(0, self._on_done)
         except Exception as e:
             # 앱이 절대 죽지 않도록 모든 예외를 받아 한국어로 안내
-            self.after(0, lambda: self._on_error(translate_error(e)))
+            msg = translate_error(e)
+            self.after(0, lambda: self._on_error(msg))
 
 
     # ── 기존 파일 키 조정 ──
     def on_shift_existing_click(self):
-        if self.downloading:
+        if self.busy:
+            messagebox.showinfo("안내", "다른 작업이 진행 중이에요. 끝난 뒤 다시 시도해 주세요.")
             return
         semitones = parse_key(self.key_menu.get())
         if semitones == 0:
@@ -356,7 +372,7 @@ class App(ctk.CTk):
             return
 
         # 별도 스레드에서 변환 → GUI 멈춤 방지
-        self.downloading = True
+        self.busy = True
         self.download_btn.configure(state="disabled")
         self.progress.set(0)
         self.set_status(f"🎹 키 조정 중... ({os.path.basename(src)})")
@@ -370,10 +386,11 @@ class App(ctk.CTk):
             out = shift_pitch(src, semitones, self.ffmpeg_path)  # 원본은 보존
             self.after(0, lambda: self._on_shift_done(out))
         except Exception as e:
-            self.after(0, lambda: self._on_error(translate_error(e)))
+            msg = translate_error(e)
+            self.after(0, lambda: self._on_error(msg))
 
     def _on_shift_done(self, out_path: str):
-        self.downloading = False
+        self.busy = False
         self.download_btn.configure(state="normal", text="⬇️ 다운로드")
         self.progress.set(1.0)
         self.set_status(f"✅ 키 조정 완료: {os.path.basename(out_path)}")
@@ -400,21 +417,52 @@ class App(ctk.CTk):
 
     # ── 완료 / 실패 처리 (메인 스레드) ──
     def _on_done(self):
-        self.downloading = False
+        self.busy = False
         self.download_btn.configure(state="normal", text="⬇️ 다운로드")
         self.progress.set(1.0)
         self.set_status("✅ 완료! 폴더 열기 버튼으로 확인하세요.")
         messagebox.showinfo("완료", "다운로드가 끝났습니다! 🎉")
 
     def _on_error(self, korean_msg: str):
-        self.downloading = False
+        self.busy = False
         self.download_btn.configure(state="normal", text="⬇️ 다운로드")
         self.progress.set(0)
         self.set_status("❌ 실패 — 아래 안내를 확인하세요.")
         messagebox.showerror("다운로드 실패", korean_msg)
 
 
+def configure_bundled_model_cache() -> None:
+    """풀 exe 에 같이 넣은 Demucs 가중치(HuggingFace 캐시)를 쓰게 한다.
+    demucs 를 import 하기 전에 호출해야 한다."""
+    bundled = resource_path("hf_home")
+    if getattr(sys, "frozen", False) and os.path.isdir(bundled):
+        os.environ.setdefault("HF_HOME", bundled)
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+
+def selftest() -> int:
+    """GUI 없이 번들이 멀쩡한지 확인. CI 가 빌드 직후 exe 로 실행한다.
+    0 = 정상. 라이트는 ffmpeg 만, 풀은 모델 로드까지 확인."""
+    configure_bundled_model_cache()
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        print("selftest: ffmpeg not found", file=sys.stderr)
+        return 1
+    from stems_page import stems_available
+    if stems_available():
+        import demucs.api
+        from separator import MODEL_NAME
+        sep = demucs.api.Separator(model=MODEL_NAME, device="cpu")
+        print(f"selftest: full build ok, stems={list(sep.model.sources)}")
+    else:
+        print("selftest: lite build ok")
+    return 0
+
+
 def main():
+    if "--selftest" in sys.argv:
+        sys.exit(selftest())
+    configure_bundled_model_cache()
     try:
         app = App()
         app.mainloop()
