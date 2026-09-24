@@ -1,0 +1,2 @@
+# 윈도우 러너의 autocrlf 가 셸 스크립트를 CRLF 로 바꾸면 MSYS2 bash 가 깨진다
+*.sh text eol=lf

@@ -12,6 +12,10 @@ dist/
 # ffmpeg (CI에서 자동 다운로드)
 ffmpeg.exe
 ffmpeg
+# 오디오 전용 ffmpeg 소스 빌드 스크립트는 추적, 소스·산출물은 제외
+!tools/ffmpeg/
+tools/ffmpeg/src/
+tools/ffmpeg/out/
 
 # 풀 빌드용 Demucs 가중치 캐시 (CI가 만든다)
 hf_home/
