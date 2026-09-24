@@ -1,32 +1,28 @@
 name: Build Windows EXE
 
-# main.py 를 윈도우 클라우드 러너에서 PyInstaller 로 빌드해
-# 단일 .exe (ffmpeg 번들 포함) 를 아티팩트로 올린다.
+# main.py 를 윈도우 러너에서 PyInstaller 로 빌드한다.
+#  - lite: 다운로드만. 단일 exe (ffmpeg 번들)
+#  - full: 스템 분리 포함. torch 가 커서 onedir 폴더를 zip 으로 (모델 가중치 hf_home 포함)
 # 맥에서는 gh run download 로 내려받으면 된다.
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Actions 탭에서 수동 실행도 가능
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-lite:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          pip install -r requirements.txt pyinstaller
 
       - name: Download ffmpeg (static build)
         shell: pwsh
@@ -36,9 +32,8 @@ jobs:
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
           $exe = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           Copy-Item $exe.FullName -Destination ffmpeg.exe
-          Write-Host "ffmpeg copied:" (Get-Item ffmpeg.exe).Length "bytes"
 
-      - name: Build EXE (PyInstaller)
+      - name: Build EXE (PyInstaller, onefile)
         shell: pwsh
         run: |
           pyinstaller --onefile --noconsole `
@@ -47,9 +42,77 @@ jobs:
             --add-binary "ffmpeg.exe;." `
             main.py
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Selftest built exe
+        shell: pwsh
+        run: |
+          & .\dist\youtube-audio-downloader.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest failed ($LASTEXITCODE)" }
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: youtube-audio-downloader-exe
+          name: youtube-audio-downloader-lite-exe
           path: dist/youtube-audio-downloader.exe
+          if-no-files-found: error
+
+  build-full:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (with demucs + torch CPU)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-stems.txt pyinstaller
+
+      - name: Download ffmpeg (static build)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp -Force
+          $exe = Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $exe.FullName -Destination ffmpeg.exe
+
+      - name: Prefetch Demucs weights into hf_home
+        shell: pwsh
+        env:
+          HF_HOME: ${{ github.workspace }}\hf_home
+          HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+        run: |
+          python -c "import demucs.api; from separator import MODEL_NAME; s = demucs.api.Separator(model=MODEL_NAME, device='cpu'); print('sources', s.model.sources)"
+          Get-ChildItem -Recurse hf_home | Measure-Object -Property Length -Sum | Select-Object Sum
+
+      - name: Build (PyInstaller, onedir)
+        shell: pwsh
+        run: |
+          pyinstaller --onedir --noconsole `
+            --name "youtube-audio-downloader-full" `
+            --collect-all customtkinter `
+            --collect-all demucs `
+            --add-binary "ffmpeg.exe;." `
+            --add-data "hf_home;hf_home" `
+            main.py
+
+      - name: Selftest built exe (offline, bundled weights)
+        # HF_HOME 을 여기서 지정하면 안 된다 — exe 안의 configure_bundled_model_cache 가
+        # setdefault 로 번들 경로를 넣으므로, 비워 둬야 번들 가중치로 로드되는지 검증된다.
+        # (러너 기본 캐시는 비어 있다: 앞 단계가 HF_HOME 을 hf_home 으로 바꿔 받았기 때문)
+        shell: pwsh
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: |
+          & .\dist\youtube-audio-downloader-full\youtube-audio-downloader-full.exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest failed ($LASTEXITCODE)" }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\youtube-audio-downloader-full -DestinationPath youtube-audio-downloader-full.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: youtube-audio-downloader-full-zip
+          path: youtube-audio-downloader-full.zip
           if-no-files-found: error
