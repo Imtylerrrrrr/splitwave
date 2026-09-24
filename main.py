@@ -13,6 +13,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+from PIL import Image, ImageTk
 import yt_dlp
 from common import (
     resource_path, find_ffmpeg, KEY_VALUES, KEY_HELP, parse_key, shift_pitch,
@@ -64,14 +65,7 @@ FORMAT_LABELS = [
     "WAV",
 ]
 
-FORMAT_HELP = (
-    "ℹ️ 유튜브 원본 오디오는 Opus 약 160kbps가 상한이라,\n"
-    "MP3 320k나 WAV로 변환해도 실제 음질이 더 좋아지지는 않습니다.\n"
-    "• 재인코딩 없음: 진짜 최고 음질 (단 .webm/opus라 일부 프로그램에서 까다로움)\n"
-    "• m4a: 음질 거의 동일 + DAW/편집 프로그램 호환성 좋음\n"
-    "• MP3 320k: 어디서나 재생되는 호환성 최강\n"
-    "• WAV: 편집 편의용 무손실 컨테이너"
-)
+FORMAT_HELP = "원본/m4a는 FFmpeg 없이도 됩니다. MP3·WAV로 바꿔도 음질이 좋아지진 않아요."
 
 
 def build_format_opts(label: str) -> dict:
@@ -112,11 +106,12 @@ class App(ctk.CTk):
         super().__init__()
 
         ctk.set_appearance_mode("dark")  # 다크모드 기본
-        ctk.set_default_color_theme("blue")
+        ctk.set_default_color_theme(resource_path("assets/theme.json"))
 
-        self.title("유튜브 오디오 다운로더")
-        self.geometry("560x780")
+        self.title("Splitwave")
+        self.geometry("560x740")
         self.resizable(False, False)
+        self._set_window_icon()
 
         # 상태
         self.settings = load_settings()
@@ -132,11 +127,32 @@ class App(ctk.CTk):
         # FFmpeg 미발견 시 미리 경고 (변환 포맷 선택 시 필요)
         if not self.ffmpeg_path:
             self.set_status(
-                "⚠️ ffmpeg.exe를 찾지 못했습니다. MP3/WAV 변환은 불가능합니다. (README 참고)"
+                "ffmpeg.exe를 찾지 못했습니다. MP3/WAV 변환은 불가능합니다. (README 참고)"
             )
+
+    def _set_window_icon(self):
+        self._icon_img = ImageTk.PhotoImage(
+            Image.open(resource_path("assets/icon.png")).resize((256, 256)))
+        self.iconphoto(True, self._icon_img)
+        if sys.platform == "win32":
+            try:
+                self.iconbitmap(resource_path("assets/icon.ico"))
+            except Exception:
+                pass
 
     # ── UI 구성 ──
     def _build_ui(self):
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=(14, 4))
+        mark = Image.open(resource_path("assets/mark.png"))
+        ctk.CTkLabel(
+            header, text="",
+            image=ctk.CTkImage(light_image=mark, dark_image=mark, size=(24, 24)),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            header, text="splitwave", font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(side="left", padx=(8, 0))
+
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=(6, 10))
         dl_tab = self.tabview.add("다운로드")
@@ -148,11 +164,6 @@ class App(ctk.CTk):
 
     def _build_download_tab(self, root):
         pad = {"padx": 20, "pady": (10, 0)}
-
-        ctk.CTkLabel(
-            root, text="🎵 유튜브 오디오 다운로더",
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack(**pad)
 
         # URL 입력
         ctk.CTkLabel(root, text="유튜브 링크를 붙여넣으세요:", anchor="w").pack(
@@ -179,8 +190,8 @@ class App(ctk.CTk):
         self.key_menu.set("0 (원본)")  # 기본값: 키 변경 없음
         self.key_menu.pack(side="left", padx=(8, 0))
         ctk.CTkButton(
-            key_row, text="🎹 기존 파일 키 조정", width=160,
-            fg_color="gray30", hover_color="gray25",
+            key_row, text="기존 파일 키 조정", width=160,
+            fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
             command=self.on_shift_existing_click,
         ).pack(side="right")
         ctk.CTkLabel(
@@ -192,7 +203,8 @@ class App(ctk.CTk):
         folder_row = ctk.CTkFrame(root, fg_color="transparent")
         folder_row.pack(fill="x", padx=20, pady=(10, 0))
         ctk.CTkButton(
-            folder_row, text="📁 저장 폴더 선택", width=130,
+            folder_row, text="저장 폴더 선택", width=130,
+            fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
             command=self.choose_folder,
         ).pack(side="left")
         self.folder_label = ctk.CTkLabel(
@@ -203,7 +215,7 @@ class App(ctk.CTk):
 
         # 다운로드 버튼
         self.download_btn = ctk.CTkButton(
-            root, text="⬇️ 다운로드", height=40,
+            root, text="다운로드", height=40,
             font=ctk.CTkFont(size=16, weight="bold"),
             command=self.on_download_click,
         )
@@ -218,8 +230,8 @@ class App(ctk.CTk):
 
         # 폴더 열기
         self.open_btn = ctk.CTkButton(
-            root, text="📂 폴더 열기", command=self.open_folder,
-            fg_color="gray30", hover_color="gray25",
+            root, text="폴더 열기", command=self.open_folder,
+            fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
         )
         self.open_btn.pack(fill="x", padx=20, pady=(10, 16))
 
@@ -329,7 +341,7 @@ class App(ctk.CTk):
                 paths = collect_filepaths(info)
                 for i, path in enumerate(paths, 1):
                     self.after(0, lambda i=i, n=len(paths): self.set_status(
-                        f"🎹 키 조정 중... ({i}/{n})"))
+                        f"키 조정 중... ({i}/{n})"))
                     shift_pitch(path, semitones, self.ffmpeg_path)
                     # 원본(키 조정 전) 파일은 삭제하고 조정본만 남긴다
                     try:
@@ -375,7 +387,7 @@ class App(ctk.CTk):
         self.busy = True
         self.download_btn.configure(state="disabled")
         self.progress.set(0)
-        self.set_status(f"🎹 키 조정 중... ({os.path.basename(src)})")
+        self.set_status(f"키 조정 중... ({os.path.basename(src)})")
         threading.Thread(
             target=self._shift_existing_worker, args=(src, semitones),
             daemon=True,
@@ -391,11 +403,11 @@ class App(ctk.CTk):
 
     def _on_shift_done(self, out_path: str):
         self.busy = False
-        self.download_btn.configure(state="normal", text="⬇️ 다운로드")
+        self.download_btn.configure(state="normal", text="다운로드")
         self.progress.set(1.0)
-        self.set_status(f"✅ 키 조정 완료: {os.path.basename(out_path)}")
+        self.set_status(f"키 조정 완료: {os.path.basename(out_path)}")
         messagebox.showinfo(
-            "완료", f"키 조정이 끝났습니다! 🎹\n\n새 파일:\n{out_path}\n\n(원본 파일은 그대로 보존됩니다)")
+            "완료", f"키 조정이 끝났습니다.\n\n새 파일:\n{out_path}\n\n(원본 파일은 그대로 보존됩니다)")
 
     # ── 진행률 훅 (워커 스레드에서 호출됨 → after()로 GUI에 전달) ──
     def _progress_hook(self, d: dict):
@@ -418,16 +430,16 @@ class App(ctk.CTk):
     # ── 완료 / 실패 처리 (메인 스레드) ──
     def _on_done(self):
         self.busy = False
-        self.download_btn.configure(state="normal", text="⬇️ 다운로드")
+        self.download_btn.configure(state="normal", text="다운로드")
         self.progress.set(1.0)
-        self.set_status("✅ 완료! 폴더 열기 버튼으로 확인하세요.")
-        messagebox.showinfo("완료", "다운로드가 끝났습니다! 🎉")
+        self.set_status("완료. 폴더 열기 버튼으로 확인하세요.")
+        messagebox.showinfo("완료", "다운로드가 끝났습니다.")
 
     def _on_error(self, korean_msg: str):
         self.busy = False
-        self.download_btn.configure(state="normal", text="⬇️ 다운로드")
+        self.download_btn.configure(state="normal", text="다운로드")
         self.progress.set(0)
-        self.set_status("❌ 실패 — 아래 안내를 확인하세요.")
+        self.set_status("실패 — 아래 안내를 확인하세요.")
         messagebox.showerror("다운로드 실패", korean_msg)
 
 

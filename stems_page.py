@@ -27,7 +27,7 @@ def stems_available() -> bool:
 
 
 LITE_NOTICE = (
-    "🎛️ 스템 분리는 풀 버전에서 지원돼요.\n\n"
+    "스템 분리는 풀 버전에서 지원돼요.\n\n"
     "• 풀 버전(zip)을 받아서 실행하거나\n"
     "• 소스로 실행 중이라면 터미널에서\n"
     "    pip install -r requirements-stems.txt\n"
@@ -72,15 +72,17 @@ class StemsPage(ctk.CTkFrame):
         from separator import STEM_LABELS, STEM_ORDER, DEFAULT_STEMS
         pad = {"padx": 20, "pady": (10, 0)}
 
-        ctk.CTkLabel(self, text="🎛️ 스템 분리", font=ctk.CTkFont(size=22, weight="bold")).pack(**pad)
         ctk.CTkLabel(self, text="유튜브 링크 또는 음원 파일 (파일이 우선):", anchor="w").pack(fill="x", **pad)
         self.url_entry = ctk.CTkEntry(self, placeholder_text="https://www.youtube.com/watch?v=...")
         self.url_entry.pack(fill="x", padx=20, pady=(4, 0))
 
         file_row = ctk.CTkFrame(self, fg_color="transparent")
         file_row.pack(fill="x", padx=20, pady=(6, 0))
-        ctk.CTkButton(file_row, text="🎵 파일 선택", width=110, command=self.on_choose_file).pack(side="left")
-        ctk.CTkButton(file_row, text="✕", width=32, fg_color="gray30", hover_color="gray25",
+        ctk.CTkButton(file_row, text="파일 선택", width=110,
+                      fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
+                      command=self.on_choose_file).pack(side="left")
+        ctk.CTkButton(file_row, text="지우기", width=64,
+                      fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
                       command=self.on_clear_file).pack(side="left", padx=(6, 0))
         self.file_label = ctk.CTkLabel(file_row, text="(선택 안 함)", anchor="w",
                                        font=ctk.CTkFont(size=11), text_color="gray70")
@@ -115,13 +117,14 @@ class StemsPage(ctk.CTkFrame):
 
         folder_row = ctk.CTkFrame(self, fg_color="transparent")
         folder_row.pack(fill="x", padx=20, pady=(10, 0))
-        ctk.CTkButton(folder_row, text="📁 저장 폴더 선택", width=130,
+        ctk.CTkButton(folder_row, text="저장 폴더 선택", width=130,
+                      fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
                       command=self.app.choose_folder).pack(side="left")
         self.folder_label = ctk.CTkLabel(folder_row, text=self.app.save_dir, anchor="w",
                                          font=ctk.CTkFont(size=11), text_color="gray70")
         self.folder_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
-        self.start_btn = ctk.CTkButton(self, text="🎛️ 분리 시작", height=40,
+        self.start_btn = ctk.CTkButton(self, text="분리 시작", height=40,
                                        font=ctk.CTkFont(size=16, weight="bold"),
                                        command=self.on_start_click)
         self.start_btn.pack(fill="x", padx=20, pady=(14, 0))
@@ -132,8 +135,9 @@ class StemsPage(ctk.CTkFrame):
         self.status_label = ctk.CTkLabel(self, text="대기 중", anchor="w")
         self.status_label.pack(fill="x", padx=20, pady=(6, 0))
 
-        self.open_btn = ctk.CTkButton(self, text="📂 결과 폴더 열기", command=self.open_result,
-                                      fg_color="gray30", hover_color="gray25", state="disabled")
+        self.open_btn = ctk.CTkButton(self, text="결과 폴더 열기", command=self.open_result,
+                                      fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
+                                      state="disabled")
         self.open_btn.pack(fill="x", padx=20, pady=(10, 16))
 
     # ── 유틸 ──
@@ -258,18 +262,18 @@ class StemsPage(ctk.CTkFrame):
     def _on_done(self, out_dir: str, saved: list[str]):
         self.app.busy = False
         self.out_dir = out_dir
-        self.start_btn.configure(state="normal", text="🎛️ 분리 시작")
+        self.start_btn.configure(state="normal", text="분리 시작")
         self.open_btn.configure(state="normal")
         self.progress.set(1.0)
-        self.set_status(f"✅ 완료: {len(saved)}개 스템 저장")
+        self.set_status(f"완료: {len(saved)}개 스템 저장")
         names = "\n".join(os.path.basename(p) for p in saved)
-        messagebox.showinfo("완료", f"스템 분리가 끝났습니다! 🎛️\n\n{names}\n\n폴더:\n{out_dir}")
+        messagebox.showinfo("완료", f"스템 분리가 끝났습니다.\n\n{names}\n\n폴더:\n{out_dir}")
 
     def _on_error(self, korean_msg: str):
         self.app.busy = False
-        self.start_btn.configure(state="normal", text="🎛️ 분리 시작")
+        self.start_btn.configure(state="normal", text="분리 시작")
         self.progress.set(0)
-        self.set_status("❌ 실패 — 아래 안내를 확인하세요.")
+        self.set_status("실패 — 아래 안내를 확인하세요.")
         messagebox.showerror("스템 분리 실패", korean_msg)
 
 

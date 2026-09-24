@@ -37,7 +37,9 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --onefile --noconsole `
-            --name "youtube-audio-downloader" `
+            --name "splitwave" `
+            --icon assets/icon.ico `
+            --add-data "assets;assets" `
             --collect-all customtkinter `
             --add-binary "ffmpeg.exe;." `
             main.py
@@ -45,13 +47,13 @@ jobs:
       - name: Selftest built exe
         shell: pwsh
         run: |
-          & .\dist\youtube-audio-downloader.exe --selftest
-          if ($LASTEXITCODE -ne 0) { throw "selftest failed ($LASTEXITCODE)" }
+          $p = Start-Process -FilePath ".\dist\splitwave.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: youtube-audio-downloader-lite-exe
-          path: dist/youtube-audio-downloader.exe
+          name: splitwave-lite-exe
+          path: dist/splitwave.exe
           if-no-files-found: error
 
   build-full:
@@ -89,7 +91,9 @@ jobs:
         shell: pwsh
         run: |
           pyinstaller --onedir --noconsole `
-            --name "youtube-audio-downloader-full" `
+            --name "splitwave-full" `
+            --icon assets/icon.ico `
+            --add-data "assets;assets" `
             --collect-all customtkinter `
             --collect-all demucs `
             --add-binary "ffmpeg.exe;." `
@@ -104,15 +108,15 @@ jobs:
         env:
           HF_HUB_OFFLINE: "1"
         run: |
-          & .\dist\youtube-audio-downloader-full\youtube-audio-downloader-full.exe --selftest
-          if ($LASTEXITCODE -ne 0) { throw "selftest failed ($LASTEXITCODE)" }
+          $p = Start-Process -FilePath ".\dist\splitwave-full\splitwave-full.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
 
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path dist\youtube-audio-downloader-full -DestinationPath youtube-audio-downloader-full.zip
+        run: Compress-Archive -Path dist\splitwave-full -DestinationPath splitwave-full.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: youtube-audio-downloader-full-zip
-          path: youtube-audio-downloader-full.zip
+          name: splitwave-full-zip
+          path: splitwave-full.zip
           if-no-files-found: error

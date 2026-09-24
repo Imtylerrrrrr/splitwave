@@ -105,7 +105,7 @@ def separate(
         frac = 0.10 + 0.80 * frac
         if frac > last[0]:
             last[0] = frac
-            report(frac, f"🎛️ 분리 중… {(frac - 0.10) / 0.80 * 100:.0f}%")
+            report(frac, f"분리 중… {(frac - 0.10) / 0.80 * 100:.0f}%")
 
     sep = demucs.api.Separator(model=MODEL_NAME, device="cpu",
                                progress=False, callback=callback)
@@ -134,7 +134,7 @@ def separate(
                 tmp.unlink(missing_ok=True)
         saved.append(str(target))
 
-    report(1.0, f"✅ 완료: {len(saved)}개 스템 저장")
+    report(1.0, f"완료: {len(saved)}개 스템 저장")
     return saved
 
 
