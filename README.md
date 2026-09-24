@@ -12,7 +12,7 @@
 | | 라이트 `splitwave.exe` | 풀 `splitwave-full.zip` |
 |---|---|---|
 | 기능 | 다운로드 + 키 조정 | 라이트 + **스템 분리** |
-| 용량 | 약 90 MB | 약 400 MB (분리 모델 포함) |
+| 용량 | 약 27 MB | 약 155 MB (분리 모델 포함) |
 | 실행 | exe 더블클릭 | 압축 풀고 **폴더 안의** `splitwave-full.exe` 실행 (exe만 꺼내면 안 됨) |
 
 → [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases)에서 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
@@ -67,7 +67,7 @@ python main.py
 
 - 맥 Homebrew 파이썬은 tkinter가 따로예요: `brew install python-tk@3.12` 먼저.
 - FFmpeg 필요 (MP3/WAV 변환·키 조정·스템 분리). 맥은 `brew install ffmpeg`, Windows는 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)에서 `ffmpeg-release-essentials.zip` → `bin/ffmpeg.exe`를 `main.py` 옆에 두면 돼요. 프로그램은 번들 → 실행파일 옆 → PATH 순으로 찾아요.
-- 소스로 실행할 때 첫 스템 분리에서 모델(약 80 MB)을 HuggingFace에서 자동으로 받아요.
+- 소스로 실행할 때 첫 스템 분리에서 모델(약 54 MB)을 HuggingFace에서 자동으로 받아요.
 - 테스트: `pip install -r requirements-dev.txt && pytest` (스템 테스트는 1분쯤)
 - `python main.py --selftest` — GUI 없이 ffmpeg·모델 로드 확인 (종료 코드 0이면 정상)
 
@@ -85,14 +85,15 @@ assets/          로고·아이콘·테마. make_assets.py 로 재생성
 
 ### 빌드
 
-`main`에 push하면 GitHub Actions가 두 가지를 만들어요 (`.github/workflows/build-windows.yml`):
+`main`에 push하면 GitHub Actions가 세 단계로 만들어요 (`.github/workflows/build-windows.yml`):
 
+- `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 8 MB 남짓이에요. `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요.
 - `build-lite` → `splitwave.exe` (PyInstaller onefile, ffmpeg 번들)
-- `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들)
+- `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들. 가중치는 한 벌만 넣고, `torch.compile`·ONNX 등 추론에 안 쓰는 모듈은 제외해요)
 
-둘 다 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다. 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
+둘 다 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다 (풀은 실제로 1초짜리 분리까지 돌려요). 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
 
-Windows에서 직접 빌드하려면 (`ffmpeg.exe`를 `main.py` 옆에 둔 상태에서):
+Windows에서 직접 빌드하려면 (`ffmpeg.exe`를 `main.py` 옆에 둔 상태에서. 어떤 ffmpeg든 되지만 CI는 위의 오디오 전용 빌드를 써요):
 
 ```bash
 pip install pyinstaller
