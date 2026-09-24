@@ -43,7 +43,7 @@
   ```powershell
   Get-FileHash splitwave-full.zip
   ```
-- **백신 검사** — Release 본문의 VirusTotal 링크 참고. PyInstaller로 만든 프로그램은 백신 몇 개가 오탐을 내는 게 흔해요(2~3/70 정도).
+- **백신 검사** — 받은 파일을 [VirusTotal](https://www.virustotal.com/)에 직접 올려 확인할 수 있어요. PyInstaller로 만든 프로그램은 백신 몇 개가 오탐을 내는 게 흔해요(2~3/70 정도).
 
 ## 자주 묻는 것
 
@@ -69,7 +69,7 @@ python main.py
 - FFmpeg 필요 (MP3/WAV 변환·키 조정·스템 분리). 맥은 `brew install ffmpeg`, Windows는 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)에서 `ffmpeg-release-essentials.zip` → `bin/ffmpeg.exe`를 `main.py` 옆에 두면 돼요. 프로그램은 번들 → 실행파일 옆 → PATH 순으로 찾아요.
 - 소스로 실행할 때 첫 스템 분리에서 모델(약 54 MB)을 HuggingFace에서 자동으로 받아요.
 - 테스트: `pip install -r requirements-dev.txt && pytest` (스템 테스트는 1분쯤)
-- `python main.py --selftest` — GUI 없이 ffmpeg·모델 로드 확인 (종료 코드 0이면 정상)
+- `python main.py --selftest` — GUI 없이 ffmpeg 확인·모델 로드·1초짜리 분리까지 실행 (종료 코드 0이면 정상)
 
 ### 구조
 
@@ -87,7 +87,7 @@ assets/          로고·아이콘·테마. make_assets.py 로 재생성
 
 `main`에 push하면 GitHub Actions가 세 단계로 만들어요 (`.github/workflows/build-windows.yml`):
 
-- `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 8 MB 남짓이에요. `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요.
+- `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 11 MB 남짓이에요 (기존 범용 빌드는 159 MB). `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요.
 - `build-lite` → `splitwave.exe` (PyInstaller onefile, ffmpeg 번들)
 - `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들. 가중치는 한 벌만 넣고, `torch.compile`·ONNX 등 추론에 안 쓰는 모듈은 제외해요)
 
