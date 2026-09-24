@@ -462,9 +462,15 @@ def selftest() -> int:
         return 1
     from stems_page import stems_available
     if stems_available():
+        import torch
         import demucs.api
-        from separator import MODEL_NAME
-        sep = demucs.api.Separator(model=MODEL_NAME, device="cpu")
+        from separator import MODEL_NAME, SAMPLE_RATE
+        sep = demucs.api.Separator(model=MODEL_NAME, device="cpu", progress=False)
+        _, out = sep.separate_tensor(torch.zeros(2, SAMPLE_RATE), SAMPLE_RATE)
+        missing = set(sep.model.sources) - set(out)
+        if missing:
+            print(f"selftest: stems missing {sorted(missing)}", file=sys.stderr)
+            return 1
         print(f"selftest: full build ok, stems={list(sep.model.sources)}")
     else:
         print("selftest: lite build ok")

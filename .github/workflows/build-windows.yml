@@ -42,6 +42,7 @@ jobs:
             --add-data "assets;assets" `
             --collect-all customtkinter `
             --add-binary "ffmpeg.exe;." `
+            --exclude-module PIL._avif --exclude-module PIL._webp `
             main.py
 
       - name: Selftest built exe
@@ -49,6 +50,10 @@ jobs:
         run: |
           $p = Start-Process -FilePath ".\dist\splitwave.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
+
+      - name: Report size
+        shell: pwsh
+        run: Get-Item dist\splitwave.exe | Select-Object Name, Length      # lite
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,6 +92,22 @@ jobs:
           python -c "import demucs.api; from separator import MODEL_NAME; s = demucs.api.Separator(model=MODEL_NAME, device='cpu'); print('sources', s.model.sources)"
           Get-ChildItem -Recurse hf_home | Measure-Object -Property Length -Sum | Select-Object Sum
 
+      - name: Prune duplicate weight copies (keep snapshots only)
+        shell: pwsh
+        env:
+          HF_HOME: ${{ github.workspace }}\hf_home
+          HF_HUB_OFFLINE: "1"
+        run: |
+          Remove-Item -Recurse -Force hf_home\xet -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force hf_home\hub\blobs -ErrorAction SilentlyContinue
+          Get-ChildItem -Directory hf_home\hub -Filter "models--*" | ForEach-Object {
+            Remove-Item -Recurse -Force (Join-Path $_.FullName "blobs") -ErrorAction SilentlyContinue
+          }
+          Get-ChildItem -Recurse -File hf_home | Measure-Object -Property Length -Sum | Select-Object Sum
+          # 정리한 캐시로 실제 로드되는지 빌드 전에 먼저 확인 (실패하면 여기서 멈춤)
+          python main.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest on pruned cache failed" }
+
       - name: Build (PyInstaller, onedir)
         shell: pwsh
         run: |
@@ -98,7 +119,15 @@ jobs:
             --collect-all demucs `
             --add-binary "ffmpeg.exe;." `
             --add-data "hf_home;hf_home" `
+            --exclude-module PIL._avif --exclude-module PIL._webp `
+            --exclude-module torch._dynamo --exclude-module torch._inductor --exclude-module torch.onnx `
+            --exclude-module sympy --exclude-module mpmath --exclude-module networkx `
+            --exclude-module hf_xet `
             main.py
+
+      - name: Prune unused torch tools
+        shell: pwsh
+        run: Remove-Item -Recurse -Force dist\splitwave-full\_internal\torch\bin -ErrorAction SilentlyContinue
 
       - name: Selftest built exe (offline, bundled weights)
         # HF_HOME 을 여기서 지정하면 안 된다 — exe 안의 configure_bundled_model_cache 가
@@ -113,7 +142,11 @@ jobs:
 
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path dist\splitwave-full -DestinationPath splitwave-full.zip
+        run: 7z a -tzip -mx=9 splitwave-full.zip .\dist\splitwave-full
+
+      - name: Report size
+        shell: pwsh
+        run: Get-Item splitwave-full.zip | Select-Object Name, Length      # full
 
       - uses: actions/upload-artifact@v4
         with:
