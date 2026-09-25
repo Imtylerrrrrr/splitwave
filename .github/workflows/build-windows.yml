@@ -140,17 +140,15 @@ jobs:
           python -c "import demucs.api; from separator import MODEL_NAME; s = demucs.api.Separator(model=MODEL_NAME, device='cpu'); print('sources', s.model.sources)"
           Get-ChildItem -Recurse hf_home | Measure-Object -Property Length -Sum | Select-Object Sum
 
-      - name: Prune duplicate weight copies (keep snapshots only)
+      - name: Prune duplicate weight copies (materialize links, keep snapshots only)
         shell: pwsh
         env:
           HF_HOME: ${{ github.workspace }}\hf_home
           HF_HUB_OFFLINE: "1"
         run: |
-          Remove-Item -Recurse -Force hf_home\xet -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force hf_home\hub\blobs -ErrorAction SilentlyContinue
-          Get-ChildItem -Directory hf_home\hub -Filter "models--*" | ForEach-Object {
-            Remove-Item -Recurse -Force (Join-Path $_.FullName "blobs") -ErrorAction SilentlyContinue
-          }
+          # snapshots 의 링크를 실제 파일로 바꾸고 blob/xet 저장소를 지운다. 가중치가 안 남으면 여기서 실패.
+          python tools/prune_hf_cache.py hf_home
+          if ($LASTEXITCODE -ne 0) { throw "prune failed" }
           Get-ChildItem -Recurse -File hf_home | Measure-Object -Property Length -Sum | Select-Object Sum
           # 정리한 캐시로 실제 로드되는지 빌드 전에 먼저 확인 (실패하면 여기서 멈춤)
           python main.py --selftest
@@ -191,6 +189,15 @@ jobs:
       - name: Zip
         shell: pwsh
         run: 7z a -tzip -mx=9 splitwave-full.zip .\dist\splitwave-full
+
+      - name: Verify zip contains the model weights
+        shell: pwsh
+        run: |
+          $line = 7z l splitwave-full.zip | Select-String -Pattern "\.safetensors$"
+          if (-not $line) { throw "no .safetensors inside splitwave-full.zip" }
+          $size = [int64](($line.Line -split "\s+")[3])
+          Write-Host "weights in zip: $size bytes"
+          if ($size -lt 50000000) { throw "weights inside zip look truncated ($size bytes)" }
 
       - name: Report size
         shell: pwsh

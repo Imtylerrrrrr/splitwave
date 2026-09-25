@@ -443,6 +443,16 @@ class App(ctk.CTk):
         messagebox.showerror("다운로드 실패", korean_msg)
 
 
+def bundled_weights_present(hf_home: str, min_bytes: int = 10_000_000) -> bool:
+    """번들 캐시 안에 실제 가중치 파일(.safetensors, 링크 아님)이 있는지.
+    demucs 는 캐시에 없으면 조용히 인터넷에서 받아오므로, 모델 로드 성공만으로는
+    번들이 멀쩡한지 알 수 없다. selftest 가 이 검사로 그 구멍을 막는다."""
+    import glob
+    pattern = os.path.join(hf_home, "hub", "models--*", "snapshots", "*", "*.safetensors")
+    return any(os.path.isfile(f) and not os.path.islink(f) and os.path.getsize(f) >= min_bytes
+               for f in glob.glob(pattern))
+
+
 def configure_bundled_model_cache() -> None:
     """풀 exe 에 같이 넣은 Demucs 가중치(HuggingFace 캐시)를 쓰게 한다.
     demucs 를 import 하기 전에 호출해야 한다."""
@@ -462,6 +472,9 @@ def selftest() -> int:
         return 1
     from stems_page import stems_available
     if stems_available():
+        if getattr(sys, "frozen", False) and not bundled_weights_present(resource_path("hf_home")):
+            print("selftest: bundled model weights missing", file=sys.stderr)
+            return 1
         import torch
         import demucs.api
         from separator import MODEL_NAME, SAMPLE_RATE
