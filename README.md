@@ -12,7 +12,7 @@
 | | 라이트 `splitwave.exe` | 풀 `splitwave-full.zip` |
 |---|---|---|
 | 기능 | 다운로드 + 키 조정 | 라이트 + **스템 분리** |
-| 용량 | 약 27 MB | 약 155 MB (분리 모델 포함) |
+| 용량 | 약 27 MB | 약 206 MB (분리 모델 포함) |
 | 실행 | exe 더블클릭 | 압축 풀고 **폴더 안의** `splitwave-full.exe` 실행 (exe만 꺼내면 안 됨) |
 
 → [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases)에서 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
@@ -91,7 +91,7 @@ assets/          로고·아이콘·테마. make_assets.py 로 재생성
 - `build-lite` → `splitwave.exe` (PyInstaller onefile, ffmpeg 번들)
 - `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들. 가중치는 한 벌만 넣고, `torch.compile`·ONNX 등 추론에 안 쓰는 모듈은 제외해요)
 
-둘 다 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다 (풀은 실제로 1초짜리 분리까지 돌려요). 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
+둘 다 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다 (풀은 번들 가중치 파일이 있는지 확인하고 실제로 1초짜리 분리까지 돌려요. 최종 zip 안에 가중치가 들어 있는지도 따로 검사해요). 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
 
 Windows에서 직접 빌드하려면 (`ffmpeg.exe`를 `main.py` 옆에 둔 상태에서. 어떤 ffmpeg든 되지만 CI는 위의 오디오 전용 빌드를 써요):
 
