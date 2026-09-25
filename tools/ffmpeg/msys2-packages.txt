@@ -1,0 +1,8 @@
+make
+diffutils
+mingw-w64-x86_64-gcc
+mingw-w64-x86_64-nasm
+mingw-w64-x86_64-pkgconf
+mingw-w64-x86_64-zlib
+mingw-w64-x86_64-lame
+mingw-w64-x86_64-opus

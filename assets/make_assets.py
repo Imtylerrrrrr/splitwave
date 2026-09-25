@@ -68,6 +68,7 @@ def render(with_bg):
 
 def write_svg(path, color=None):
     """color 를 주면 선·글자 색을 바꿔 쓴다 (README 라이트 모드용 어두운 버전)."""
+    text_color = color or TEXT
     color = color or LINE
     parts = [f"M {X0} {Y_MID} L {X_SPLIT} {Y_MID}"]
     for y_end in Y_ENDS:
@@ -75,7 +76,7 @@ def write_svg(path, color=None):
     d = " ".join(parts)
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3200 1024" width="400" height="128">
   <path d="{d}" fill="none" stroke="{color}" stroke-width="{STROKE}" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="{color}">splitwave</text>
+  <text x="1000" y="640" font-family="Inter, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="400" fill="{text_color}">splitwave</text>
 </svg>
 """
     with open(path, "w", encoding="utf-8") as f:

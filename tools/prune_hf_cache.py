@@ -28,34 +28,42 @@ def materialize_links(snapshots_root: str) -> int:
                 continue
             target = os.path.realpath(path)
             if not os.path.isfile(target):
-                raise SystemExit(f"prune: dangling link {path} -> {target}")
+                raise SystemExit(f"prune: dangling link {path} -> {target}. "
+                                 "Fix: re-run the prefetch step; the HF download did not complete.")
             os.unlink(path)
             shutil.copyfile(target, path)
             n += 1
     return n
 
 
+def remove_dir(path: str) -> None:
+    """없으면 넘어가고, 있는데 못 지우면 실패한다 (조용히 남으면 중복 가중치가 번들에 들어간다)."""
+    if os.path.lexists(path):
+        shutil.rmtree(path)
+
+
 def real_weight_files(hf_home: str) -> list:
-    pattern = os.path.join(hf_home, "hub", "models--*", "snapshots", "*", "*.safetensors")
+    pattern = os.path.join(glob.escape(hf_home), "hub", "models--*", "snapshots", "*", "*.safetensors")
     return [p for p in glob.glob(pattern)
             if os.path.isfile(p) and not os.path.islink(p) and os.path.getsize(p) >= MIN_WEIGHT_BYTES]
 
 
 def prune(hf_home: str) -> None:
     hub = os.path.join(hf_home, "hub")
-    for model_dir in glob.glob(os.path.join(hub, "models--*")):
+    for model_dir in glob.glob(os.path.join(glob.escape(hub), "models--*")):
         n = materialize_links(os.path.join(model_dir, "snapshots"))
         print(f"prune: {os.path.basename(model_dir)}: {n} link(s) materialized")
-        shutil.rmtree(os.path.join(model_dir, "blobs"), ignore_errors=True)
-    shutil.rmtree(os.path.join(hub, "blobs"), ignore_errors=True)  # 공유 blob 저장소
-    shutil.rmtree(os.path.join(hf_home, "xet"), ignore_errors=True)
+        remove_dir(os.path.join(model_dir, "blobs"))
+    remove_dir(os.path.join(hub, "blobs"))  # 공유 blob 저장소
+    remove_dir(os.path.join(hf_home, "xet"))
 
     weights = real_weight_files(hf_home)
     total = sum(os.path.getsize(os.path.join(r, f))
                 for r, _d, fs in os.walk(hf_home) for f in fs if not os.path.islink(os.path.join(r, f)))
     print(f"prune: {len(weights)} weight file(s), hf_home total {total / 1e6:.1f} MB")
     if not weights:
-        raise SystemExit("prune: no real weight file left under snapshots/ -- refusing to continue")
+        raise SystemExit("prune: no real weight file left under snapshots/. "
+                         "Fix: check the prefetch step downloaded from HuggingFace (MODEL_NAME must be hf://...).")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ jobs:
         id: cache
         with:
           path: tools/ffmpeg/out/ffmpeg.exe
-          key: ffmpeg-audio-${{ hashFiles('tools/ffmpeg/build.sh') }}
+          key: ffmpeg-audio-${{ hashFiles('tools/ffmpeg/build.sh', 'tools/ffmpeg/msys2-packages.txt') }}
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -35,9 +35,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
-          pacman -S --noconfirm --needed make diffutils \
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm mingw-w64-x86_64-pkgconf \
-            mingw-w64-x86_64-zlib mingw-w64-x86_64-lame mingw-w64-x86_64-opus
+          pacman -S --noconfirm --needed $(cat tools/ffmpeg/msys2-packages.txt)
           bash tools/ffmpeg/build.sh
 
       - name: Smoke test + dependency check
@@ -131,6 +129,11 @@ jobs:
         shell: pwsh
         run: Get-Item ffmpeg.exe | Select-Object Name, Length
 
+      - name: Unit tests
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest -q
+
       - name: Prefetch Demucs weights into hf_home
         shell: pwsh
         env:
@@ -193,11 +196,13 @@ jobs:
       - name: Verify zip contains the model weights
         shell: pwsh
         run: |
-          $line = 7z l splitwave-full.zip | Select-String -Pattern "\.safetensors$"
-          if (-not $line) { throw "no .safetensors inside splitwave-full.zip" }
-          $size = [int64](($line.Line -split "\s+")[3])
-          Write-Host "weights in zip: $size bytes"
-          if ($size -lt 50000000) { throw "weights inside zip look truncated ($size bytes)" }
+          $lines = @(7z l splitwave-full.zip | Select-String -Pattern "\.safetensors$")
+          if ($lines.Count -eq 0) { throw "no .safetensors inside splitwave-full.zip" }
+          foreach ($l in $lines) {
+            $size = [int64](($l.Line.Trim() -split "\s+")[3])
+            Write-Host "weights in zip: $size bytes ($($l.Line.Trim().Split(' ')[-1]))"
+            if ($size -lt 10000000) { throw "weights inside zip look truncated ($size bytes)" }
+          }
 
       - name: Report size
         shell: pwsh

@@ -15,7 +15,9 @@ import numpy as np
 
 from common import pitch_filter, CODEC_BY_EXT
 
-MODEL_NAME = "htdemucs_6s"
+# hf:// 접두사: HuggingFace 캐시에서만 로드한다. 접두사 없이 쓰면 demucs가 HF 로드 실패 시
+# 조용히 AWS에서 받아오는 폴백이 있어 번들 누락을 가릴 수 있다 (v1.0.1 사고).
+MODEL_NAME = "hf://htdemucs_6s"
 SAMPLE_RATE = 44100  # htdemucs 계열 모델의 샘플레이트
 
 # demucs 스템 이름 → 파일명에 쓸 한국어 라벨

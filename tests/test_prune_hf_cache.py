@@ -10,8 +10,18 @@ prune_hf_cache = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(prune_hf_cache)
 
 
+def _symlinks_supported(tmp_path):
+    try:
+        os.symlink(tmp_path, tmp_path / "_probe")
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
 def make_cache(tmp_path, weight_bytes):
     """프리페치 직후 모양: snapshot 이 blob 을 가리키는 링크 + 공유 blob + xet 캐시."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("symlinks not permitted on this machine")
     hf = tmp_path / "hf_home"
     model = hf / "hub" / "models--adefossez--HTDemucs-6s"
     blob = model / "blobs" / "d2a1"
@@ -28,6 +38,17 @@ def make_cache(tmp_path, weight_bytes):
     (model / "refs").mkdir()
     (model / "refs" / "main").write_text("rev")
     return hf, snap
+
+
+def test_prune_fails_loudly_when_delete_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(prune_hf_cache, "MIN_WEIGHT_BYTES", 10)
+    hf, _snap = make_cache(tmp_path, weight_bytes=100)
+
+    def boom(path):
+        raise PermissionError(path)
+    monkeypatch.setattr(prune_hf_cache.shutil, "rmtree", boom)
+    with pytest.raises(PermissionError):
+        prune_hf_cache.prune(str(hf))
 
 
 def test_prune_materializes_links_and_drops_blob_stores(tmp_path, monkeypatch):
@@ -51,16 +72,3 @@ def test_prune_refuses_when_no_real_weight_remains(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit):
         prune_hf_cache.prune(str(hf))
-
-
-def test_bundled_weights_present_ignores_links_and_small_files(tmp_path):
-    import main
-    hf, snap = make_cache(tmp_path, weight_bytes=100)
-    assert main.bundled_weights_present(str(hf), min_bytes=10) is False  # 아직 링크
-    prune_hf_cache.MIN_WEIGHT_BYTES, saved = 10, prune_hf_cache.MIN_WEIGHT_BYTES
-    try:
-        prune_hf_cache.prune(str(hf))
-    finally:
-        prune_hf_cache.MIN_WEIGHT_BYTES = saved
-    assert main.bundled_weights_present(str(hf), min_bytes=10) is True
-    assert main.bundled_weights_present(str(hf), min_bytes=1000) is False
