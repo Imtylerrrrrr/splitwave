@@ -35,7 +35,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
         run: |
-          pacman -S --noconfirm --needed $(cat tools/ffmpeg/msys2-packages.txt)
+          pacman -S --noconfirm --needed $(tr -d '\r' < tools/ffmpeg/msys2-packages.txt)
           bash tools/ffmpeg/build.sh
 
       - name: Smoke test + dependency check
