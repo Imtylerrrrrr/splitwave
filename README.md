@@ -12,7 +12,7 @@
 | | 라이트 `splitwave.exe` | 풀 `splitwave-full.zip` |
 |---|---|---|
 | 기능 | 다운로드 + 키 조정 | 라이트 + **스템 분리** |
-| 용량 | 약 27 MB | 약 206 MB (분리 모델 포함) |
+| 용량 | 약 27 MB | 약 209 MB (분리 모델 포함) |
 | 실행 | exe 더블클릭 | 압축 풀고 **폴더 안의** `splitwave-full.exe` 실행 (exe만 꺼내면 안 됨) |
 
 → [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases)에서 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
