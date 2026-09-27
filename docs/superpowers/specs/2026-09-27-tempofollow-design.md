@@ -200,3 +200,114 @@ SLEW_PER_S = 0.08   # 초당 최대 비율 변화
 ## 범위 밖
 
 - 박 위치(위상) 동기, 루프 재생, 본체 통합, Windows 실행파일 빌드.
+
+---
+
+# 추가 1: 자기 출력 되먹임 차단 (2026-09-27, 합주 테스트 후)
+
+## 문제
+
+합주에서 앱 출력을 믹서에 넣고 스피커로 틀자 마이크가 앱 소리를 같이 들어 **앱이 자기 템포를 다시 측정**했다.
+기준점이 없어져 작은 편향이 매 측정마다 누적돼 혼자 빨라졌다. 확인된 편향: (1) FFT 자기상관은 짧은 lag 쪽이
+항 수가 많아 최대점이 살짝 빠른 쪽으로 쏠린다(편향 추정량), (2) 사람이 트랙이 빨라지면 같이 미는 습관.
+용도는 "빠진 건반 스템을 드러머에 맞춰 틀기"라 **순수 추종**이어야 하고, 기본 BPM으로 되돌리는 복원력은 넣지 않는다.
+
+## 대책 세 가지 (전부 넣는다)
+
+1. **자기 출력 상쇄**: 앱은 자기가 내보내는 소리를 정확히 안다. 출력 파형과 마이크 파형의 지연을 GCC-PHAT로 추정하고,
+   출력의 온셋 강도를 그 지연만큼 밀어 마이크 온셋 강도에서 최소제곱 이득으로 뺀다.
+2. **불편 자기상관**: `r[l] *= W / (W - l)`.
+3. **데드밴드**: 측정 BPM이 현재 *재생* BPM의 ±0.5 % 안이면 무시 (자기 소리는 정확히 그 값이라 걸러지고, 드러머가 그보다 다르면 통과).
+
+## tempo.py 변경
+
+### estimate_delay(mic, ref, max_delay) -> (delay_samples: int, confidence: float)
+
+GCC-PHAT. `n = 1 << (len(mic) + len(ref) - 1).bit_length()`; `R = rfft(mic, n) * conj(rfft(ref, n))`;
+`c = irfft(R / (|R| + 1e-12), n)[: max_delay + 1]`; `k = argmax(c)`; `confidence = c[k] / (sqrt(mean(c^2)) + 1e-12)`.
+(`c[k]`는 `mic[t] ≈ ref[t - k]`, 즉 마이크가 k 샘플 늦게 듣는 경우가 최대.)
+
+### _acf_peak_bpm
+
+`r = r / r[0]` 다음에 `r = r * (w_len / (w_len - np.arange(w_len)))` 한 줄 추가.
+
+### TempoTracker
+
+생성자 추가 인자: `max_delay_s=0.5, min_delay_conf=6.0, wave_s=2.0, deadband=0.005`.
+추가 상태: `playback_bpm: float | None = None`(엔진이 매 루프 갱신), `bleed_delay_s: float | None = None`, `bleed_gain = 0.0`,
+`_ref_onset = OnsetStrength(sr, hop=hop)`, `_ref_ring`(길이 W, 0), `_ref_frames = 0`,
+`_mic_wave`·`_ref_wave`(길이 `round(wave_s*sr)` float32 0), `_delays: list[int]`(최근 5개 채택값).
+
+- `process(mono)`: 기존대로 온셋 프레임을 `_ring`에 넣고, `_mic_wave = concat(_mic_wave[len(mono):], mono)[-len:]`(mono가 더 길면 뒤쪽만 유지).
+- `process_ref(mono)` (신규): `_ref_onset`으로 프레임을 만들어 `_ref_ring`에 같은 방식으로 넣고 `_ref_frames += n`, `_ref_wave`도 같은 방식으로 갱신.
+- `_measure()` 순서:
+  1. 기존 프레임 수 검사. `o = _ring.copy()`.
+  2. `_ref_frames > 0`이면:
+     - `k, conf = estimate_delay(_mic_wave, _ref_wave, round(max_delay_s * sr))`; `conf >= min_delay_conf`면 `_delays.append(k)`(5개 유지), `bleed_delay_s = median(_delays) / sr`.
+     - `bleed_delay_s is not None`이면: `d = round(bleed_delay_s * sr / hop)`; `d < W`일 때:
+       `rs = convolve(_ref_ring, hann5 / hann5.sum(), "same")`(`hann5 = np.hanning(5)`); `shifted = zeros(W); shifted[d:] = rs[:W - d]`;
+       `om = o - o.mean(); sm = shifted - shifted.mean()`; `g = max(0, dot(om, sm) / (dot(sm, sm) + 1e-12))`;
+       `o = maximum(o - g * shifted, 0)`; `bleed_gain = g`.
+  3. 기존: `o.max()` 검사 → crest 검사 → `_acf_peak_bpm` → confidence 검사.
+  4. 데드밴드: `playback_bpm`이 있고 `abs(bpm_meas - playback_bpm) < deadband * playback_bpm`이면 return (측정 채택 안 함).
+  5. 기존 EMA 갱신·`measurements += 1`.
+
+## engine.py 변경
+
+- 마이크 블록을 SR(44100)로 선형 보간 리샘플한 뒤 트래커에 넣는다 (`TempoTracker(SR, ...)`로 생성). 블록 경계 위상을 유지하는 작은 클래스:
+  ```python
+  class _Resampler:
+      def __init__(self, src_sr, dst_sr):
+          self.step = src_sr / dst_sr; self.pos = 0.0; self.last = np.zeros(1, np.float32)
+      def process(self, block):
+          x = np.concatenate([self.last, block])
+          idx = np.arange(self.pos, len(x) - 1, self.step)
+          out = np.interp(idx, np.arange(len(x)), x).astype(np.float32)
+          consumed = len(x) - 1
+          self.pos = (idx[-1] + self.step - consumed) if len(idx) else (self.pos - consumed)
+          self.last = x[-1:]
+          return out
+  ```
+- `_out_cb`: outdata를 채운 뒤(0으로 채운 경우 포함) `outdata.mean(axis=1).copy()`를 `_ref_queue`(maxsize 256)에 `put_nowait`(가득 차면 버림).
+- 분석 스레드: 매 반복에서 `_ref_queue`를 비우며 `tracker.process_ref(block)`, 그다음 마이크 블록을 리샘플해 `tracker.process(block)`.
+- `_produce`: 비율 갱신 직후 `self.tracker.playback_bpm = self.base_bpm * self.ratio`.
+- `status()`에 `bleed_delay_ms`(None 또는 ms float), `bleed_gain` 추가.
+
+## app.py 변경
+
+`_poll`의 "재생 중" 상태줄: `bleed_delay_ms`가 None이 아니면 `f"재생 중 · 스피커 소리 상쇄 중 (지연 {ms:.0f} ms)"`.
+
+## README 변경
+
+헤드폰 주의 문장을 다음으로 교체: "앱 소리가 마이크로 되돌아오는 건 앱이 지연을 추정해 상쇄하지만, 헤드폰을 쓰거나
+믹서 aux 센드로 드럼 채널만 앱에 넣으면 훨씬 정확해요."
+
+## 테스트 추가 (tests/test_tempofollow_tempo.py)
+
+1. `test_estimate_delay_finds_echo`: `ref = rng.normal(0,1,44100)`; `mic = 0.5*shift(ref, 3000) + rng.normal(0,0.3,44100)`
+   (shift는 앞에 0을 3000개 넣고 길이 맞춤) → `estimate_delay(mic, ref, 22050)` → `k == 3000`, `conf > 6`.
+   같은 함수에 `mic = rng.normal(0,1,44100)`(무관한 신호) → `conf < 6`.
+2. `test_deadband_ignores_playback_tempo`: `t = TempoTracker(48000, 110); t.playback_bpm = 100.0`; `clicks(100, 8, 48000)` 480샘플씩 → `t.measurements == 0`, `t.bpm == 110`.
+3. `test_closed_loop_bleed`: 아래 시뮬레이터로 두 경우.
+   - 드러머 없음(마이크 = 블리드만): 45초 후 `abs(ratio - 1.0) < 0.005` (혼자 안 빨라짐).
+   - 드러머 100 BPM + 블리드 1.5배: 45초 후 `abs(110 * ratio - 100) < 2`.
+
+   시뮬레이터(테스트 파일 안의 헬퍼 `simulate(drum: np.ndarray | None, seconds=45)`):
+   ```
+   sr = 44100; base = 110.0; delay = round(0.12*sr); gain = 1.5; step = round(0.25*sr)
+   tr = TempoTracker(sr, base); ratio = 1.0; dl = zeros(delay); next_beat = 0(샘플); burst = 5ms 감쇠 노이즈(rng seed 1, 진폭 0.8)
+   for i in range(0, seconds*sr, step):
+       ref = zeros(step)
+       while next_beat < i + step:                     # 현재 재생 템포로 클릭 배치
+           j = next_beat - i;  if j >= 0: ref[j:j+len(burst)] += burst[:step-j]
+           next_beat += round(60 / (base*ratio) * sr)
+       buf = concat(dl, ref); bleed, dl = buf[:step], buf[step:]     # 120 ms 지연선
+       mic = gain*bleed + (drum[i:i+step] if drum is not None else 0)
+       tr.process_ref(ref); tr.process(mic)
+       target = clip(tr.bpm/base, 0.7, 1.4); ratio += clip(target - ratio, -0.02, 0.02)   # 0.08/s * 0.25 s
+       tr.playback_bpm = base*ratio
+   return ratio
+   ```
+   드러머 클릭은 기존 `clicks(100, 45, 44100)`(seed 0이라 ref 버스트와 무상관).
+
+기존 테스트의 허용 오차는 그대로 두고 전부 통과해야 한다. 채택된 스펙 이탈(4초 채우기 전 측정 안 함, 무음 테스트 완화)은 유지.
