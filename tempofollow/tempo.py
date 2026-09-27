@@ -85,9 +85,9 @@ class TempoTracker:
     마이크 온셋 대부분이 자기 소리인 창은 측정하지 않는다."""
 
     def __init__(self, sr, base_bpm, hop=256, n_fft=1024, ratio_range=(0.7, 1.4), window_s=4.0,
-                 update_s=0.25, tau_s=1.0, prior_sigma_oct=0.1, min_crest=2.5,
-                 min_confidence=0.2, deadband=0.005, beta=2.0, tail=0.9, lam=0.999,
-                 max_delay_s=0.8, min_delay_conf=6.0, floor=0.003, min_frac=0.4):
+                 update_s=0.25, tau_s=0.5, prior_sigma_oct=0.1, min_crest=2.5,
+                 min_confidence=0.3, deadband=0.005, beta=2.0, tail=0.9, lam=0.999,
+                 max_delay_s=0.8, min_delay_conf=4.0, floor=0.003, min_frac=0.4, gamma=5.0):
         self.sr = sr
         self.hop = hop
         self.n_fft = n_fft
@@ -104,6 +104,8 @@ class TempoTracker:
         self.min_delay_conf = min_delay_conf
         self.floor = floor
         self.min_frac = min_frac
+        self.gamma = gamma
+        self._cands = []    # 최근 2초(8회)의 측정 후보. 게이트에 걸린 회차는 None
         self.alpha = 1 - math.exp(-update_s / tau_s)
         self.bpm = float(base_bpm)
         self.confidence = 0.0
@@ -115,7 +117,10 @@ class TempoTracker:
         self._ring = np.zeros(W)        # 상쇄 후 플럭스
         self._raw_ring = np.zeros(W)    # 원본 마이크 플럭스
         self._update_frames = round(update_s * sr / hop)
-        self._gcc_frames = round(sr / hop)
+        self._gcc_frames = round(0.5 * sr / hop)
+        self._hold_samples = 8 * sr      # 출력이 들리기 시작한 뒤 지연을 찾으려 기다리는 한도
+        self._ref_active = 0             # 무음이 아닌 출력 샘플 수
+        self._cancel_frames = 0          # 상쇄가 켜진 채 처리한 연속 프레임 수
         self._frames = self._since = self._gcc_since = 0
         # 두 스트림은 같은 시각에 시작했다고 보고 누적 샘플 수(절대 위치)로 맞춘다
         self._keep = int((max_delay_s + 2.5) * sr)
@@ -135,6 +140,7 @@ class TempoTracker:
         self._mr = np.zeros(nb)
         self._cov = np.zeros(nb)
         self._var = np.zeros(nb)
+        self._n = np.zeros(nb)    # 빈별 학습 프레임 수
         self._scale = floor
 
     def process_ref(self, mono: np.ndarray) -> None:
@@ -142,6 +148,8 @@ class TempoTracker:
         mono = np.asarray(mono, dtype=np.float32)
         self._rb = np.concatenate([self._rb[len(mono):], mono])[-self._keep:]
         self._ref_total += len(mono)
+        if len(mono) and np.abs(mono).max() > 1e-6:
+            self._ref_active += len(mono)
 
     def process(self, mono: np.ndarray) -> None:
         mono = np.asarray(mono, dtype=np.float32)
@@ -172,21 +180,28 @@ class TempoTracker:
         Mm = np.abs(np.fft.rfft(x * self._win))
         if ref is not None:
             Mr = np.abs(np.fft.rfft(ref * self._win))
+            # 이득은 출력이 직접 들리는 빈(잔향 꼬리보다 큰 빈)에서만 배운다.
+            # 꼬리 구간까지 넣으면 잔향이 적은 방에서 이득이 작게 나와 상쇄가 약해진다
+            act = Mr >= self.tail * self._Re
             self._Re = np.maximum(Mr, self.tail * self._Re)    # 잔향 꼬리 포락선
-            lam = self.lam
-            self._mm = lam * self._mm + (1 - lam) * Mm
-            self._mr = lam * self._mr + (1 - lam) * self._Re
-            self._cov = lam * self._cov + (1 - lam) * (Mm - self._mm) * (self._Re - self._mr)
-            self._var = lam * self._var + (1 - lam) * (self._Re - self._mr) ** 2
+            self._cancel_frames += 1
+            self._n = self._n + act
+            lam = np.minimum(self.lam, 1 - 1 / (self._n + 1))      # 처음엔 누적 평균으로 빨리 수렴
+            mm = np.where(act, lam * self._mm + (1 - lam) * Mm, self._mm)
+            mr = np.where(act, lam * self._mr + (1 - lam) * Mr, self._mr)
+            self._cov = np.where(act, lam * self._cov + (1 - lam) * (Mm - mm) * (Mr - mr), self._cov)
+            self._var = np.where(act, lam * self._var + (1 - lam) * (Mr - mr) ** 2, self._var)
+            self._mm, self._mr = mm, mr
             G = np.clip(self._cov / (self._var + 1e-12), 0, None)
             Mc = np.maximum(Mm - self.beta * G * self._Re, 0)
         else:
+            self._cancel_frames = 0
             Mc = Mm
         # 음량 인식 압축: 최근 큰 소리 기준이라 작은 잔류·잡음은 온셋이 거의 안 생긴다
         rms = float(np.sqrt(np.mean(x ** 2)))
         self._scale = max(self._scale * 0.9995, rms, self.floor)
-        S = np.log1p(Mc / self._scale)
-        Sr = np.log1p(Mm / self._scale)
+        S = np.log1p(self.gamma * Mc / self._scale)
+        Sr = np.log1p(self.gamma * Mm / self._scale)
         v = np.maximum(S - self._prev, 0).sum()
         self._prev = S
         vr = np.maximum(Sr - self._prev_raw, 0).sum()
@@ -216,34 +231,58 @@ class TempoTracker:
         if np.abs(r).max() <= 1e-6:
             return
         k, conf = estimate_delay(self._mb[ms:ms + n], r, self._max_delay, self.sr)
-        if conf >= self.min_delay_conf:
-            self._delays = (self._delays + [k])[-9:]
-            self._delay = int(np.median(self._delays))
+        if conf < self.min_delay_conf:
+            return
+        self._delays = (self._delays + [k])[-9:]
+        med = float(np.median(self._delays))
+        # 실제 블리드는 매번 같은 지연이 나오고, 블리드가 없으면 추정이 흩어진다
+        # 일치하지 않으면 마지막 유효값을 유지한다 (물리적 지연은 세션 중 안 변하고,
+        # 블리드가 없어지면 이득이 0으로 수렴해 상쇄가 저절로 꺼진다)
+        if sum(abs(d - med) <= 0.002 * self.sr for d in self._delays) >= 5:
+            self._delay = int(med)
             self.bleed_delay_s = self._delay / self.sr
 
     def _measure(self) -> None:
+        cand = self._candidate()
+        self._cands = (self._cands + [cand])[-8:]
+        good = [c for c in self._cands if c is not None]
+        if cand is None or len(good) < 6:
+            return
+        # 드럼은 연속 측정이 서로 일치하고, 드럼 아닌 소리·주변 소음은 흩어진다
+        med = float(np.median(good))
+        if sum(abs(c - med) < 0.03 * med for c in good) < 6:
+            return
+        # 재생 템포와 거의 같은 측정은 자기 소리일 수 있어 버린다
+        if self.playback_bpm and abs(med - self.playback_bpm) < self.deadband * self.playback_bpm:
+            return
+        self.bpm += self.alpha * (med - self.bpm)
+        self.measurements += 1
+
+    def _candidate(self):
+        """이번 창의 템포 후보. 게이트에 걸리면 None."""
         # 링이 한 번 다 차기 전에는 0 구간과 신호 구간의 경계가 crest·ACF를 속인다
         if self._frames < len(self._ring):
-            return
+            return None
+        if self._delay is None:
+            if 0 < self._ref_active < self._hold_samples:
+                return None    # 출력이 막 들리기 시작했다: 새어 드는지(지연) 먼저 확인
+        elif self._cancel_frames < len(self._ring):
+            return None        # 링에 상쇄 전 프레임이 아직 남아 있다
         o = self._ring.copy()
         if self._ref_total > 0:
             self.clean_frac = float(o.sum() / (self._raw_ring.sum() + 1e-12))
             if self.clean_frac < self.min_frac:
-                return    # 마이크 온셋 대부분이 자기 소리
+                return None    # 마이크 온셋 대부분이 자기 소리
         if o.max() <= 1e-9:
-            return
+            return None
         if o.max() / (o.mean() + 1e-12) < self.min_crest:
-            return
+            return None
         res = _acf_peak_bpm(o, self.sr, self.hop, self.bpm_lo, self.bpm_hi,
                             self.bpm, self.prior_sigma_oct)
         if res is None or res[1] < self.min_confidence:
-            return
-        bpm_meas, self.confidence = res
-        # 재생 템포와 거의 같은 측정은 자기 소리일 수 있어 버린다
-        if self.playback_bpm and abs(bpm_meas - self.playback_bpm) < self.deadband * self.playback_bpm:
-            return
-        self.bpm += self.alpha * (bpm_meas - self.bpm)
-        self.measurements += 1
+            return None
+        self.confidence = res[1]
+        return res[0]
 
 
 def estimate_bpm(mono, sr, lo=60.0, hi=200.0, prior_bpm=110.0, prior_sigma_oct=0.6) -> float:

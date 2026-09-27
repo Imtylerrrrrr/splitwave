@@ -25,8 +25,10 @@ def feed(tracker, y, block=480):
 
 
 def converged_tracker():
+    # 8초: 4초 창이 차고, 최근 2초 측정 중 6회가 일치해야 채택하므로 첫 채택이 5.5초쯤이다
+    # (합의 규칙을 넣기 전에는 6초였다. 드럼 아닌 소리를 걸러내는 대가로 1.5초 늦어짐)
     t = TempoTracker(48000, base_bpm=110)
-    feed(t, clicks(100, 6, 48000))
+    feed(t, clicks(100, 8, 48000))
     return t
 
 
