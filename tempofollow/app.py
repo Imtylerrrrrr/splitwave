@@ -270,6 +270,8 @@ class App(ctk.CTk):
             text=f"{fmt_time(st['position_s'])} / {fmt_time(st['duration_s'])}")
         if self.wait_for_hit and not st["playing"]:
             self.set_status("드럼을 치면 시작합니다")
+        elif st["bleed_delay_ms"] is not None:
+            self.set_status(f"재생 중 · 스피커 소리 상쇄 중 (지연 {st['bleed_delay_ms']:.0f} ms)")
         else:
             self.set_status("재생 중")
         self.after(100, self._poll)
