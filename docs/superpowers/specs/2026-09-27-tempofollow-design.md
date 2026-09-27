@@ -311,3 +311,94 @@ GCC-PHAT. `n = 1 << (len(mic) + len(ref) - 1).bit_length()`; `R = rfft(mic, n) *
    드러머 클릭은 기존 `clicks(100, 45, 44100)`(seed 0이라 ref 버스트와 무상관).
 
 기존 테스트의 허용 오차는 그대로 두고 전부 통과해야 한다. 채택된 스펙 이탈(4초 채우기 전 측정 안 함, 무음 테스트 완화)은 유지.
+
+---
+
+# 추가 2: 드럼 아닌 소리 무시 + 스펙트럼 영역 상쇄 (2026-09-27, 실제 스템 폐루프 실험 후)
+
+추가 1(온셋 영역 상쇄)은 실제 스템으로 폐루프를 돌리면 여전히 템포가 흔들렸다. 실험으로 확인한 사실:
+
+| 사실 | 근거 (실제 스템 2곡, 4초 창 측정) |
+|---|---|
+| 드럼만 들으면 측정이 정확 | 드럼 스템: 기본 BPM ±2 % 안 91~93 % |
+| 드럼 아닌 소리는 측정이 거의 무작위 | 건반·기타·베이스·보컬: ±2 % 안 15~50 %, 나머지는 범위 전체에 흩어짐 |
+| 압축 `log1p(100*mag)`는 음량을 거의 무시 | 40 dB 작은 소리도 온셋 강도가 절반 → 작은 잔류·잡음이 큰 드럼과 같은 취급 |
+| 온셋 영역 상쇄는 잔류가 큼 | 트랙만 틀어도(드러머 없음) 90초에 56회 측정 채택, 비율 0.85~0.99로 표류 |
+| GCC-PHAT는 창 없이 쓰면 lag 0으로 튐 | 저역 위주 구간에서 사각 창 가장자리 누설이 고역 빈에서 lag 0 상관을 만듦 |
+
+폭주의 실제 원인은 "자기 소리를 포함해 드럼 아닌 소리의 엉터리 측정을 그대로 따라감"이다.
+
+## 확정 설계 (시제품 `docs/superpowers/specs/2026-09-27-tempofollow-proto.py`의 `Tracker2`, `est_delay`가 기준 구현)
+
+시제품 폐루프 결과 (실제 스템, 잔향 0.4 s, 블리드 지연 120 ms, 90초, 목표 대비 비율):
+
+| 시나리오 | 트랙=곡A 드럼 뺀 전체 / 라이브=곡B | 트랙=곡B 건반 / 라이브=곡A |
+|---|---|---|
+| 트랙만 (드러머 없음) | 1.000, 측정 0회 | 1.000, 측정 0회 |
+| 드러머 0.95 | 0.951 | 0.958 |
+| 드러머 1.05 | 1.047 | 1.040 |
+| 드러머 0.95 + 밴드 | 0.964 (수렴 60초) | 0.955 |
+| 드러머 1.08 + 밴드 | 1.077 (수렴 75초) | 1.080 |
+
+### tempo.py
+
+`OnsetStrength`, `_acf_peak_bpm`(불편 보정 포함), `estimate_bpm`은 그대로 둔다.
+
+**`estimate_delay(mic, ref, max_delay, sr, min_delay_s=0.005) -> (delay_samples, confidence)`** 교체:
+두 구간에 `np.hanning(len)` 창 → `n = 1 << (len(mic)+len(ref)-1).bit_length()` → `R = rfft(mic*w, n) * conj(rfft(ref*w, n))`
+→ 100 Hz~8 kHz 빈만 `R/(|R|+1e-12)`, 나머지 0 → `c = irfft(.., n)[:max_delay+1]` → `lo = int(min_delay_s*sr)`,
+`k = lo + argmax(c[lo:])`, `confidence = c[k] / (sqrt(mean(c^2)) + 1e-12)`.
+
+**`TempoTracker`** 를 시제품 `Tracker2`의 알고리즘으로 교체한다. 생성자:
+`TempoTracker(sr, base_bpm, hop=256, n_fft=1024, ratio_range=(0.7, 1.4), window_s=4.0, update_s=0.25, tau_s=1.0,
+prior_sigma_oct=0.1, min_crest=2.5, min_confidence=0.2, deadband=0.005, beta=2.0, tail=0.9, lam=0.999,
+max_delay_s=0.8, min_delay_conf=6.0, floor=0.003, min_frac=0.4)`.
+
+공개 속성(엔진·앱이 씀): `bpm`, `confidence`, `measurements`, `playback_bpm`, `bleed_delay_s`(None 또는 초), `clean_frac`(마지막 측정 창의 비율, 초기 1.0).
+추가 1의 `bleed_gain`은 없앤다 (엔진 `status()`와 앱에서도 제거).
+
+프레임 하나의 처리 (시제품 `_frame`과 동일):
+1. `Mm = |rfft(mic_frame * hann)|`.
+2. 지연을 알면: `Mr = |rfft(ref_frame * hann)|` (ref_frame은 마이크 프레임보다 `delay` 샘플 앞선 구간) →
+   잔향 꼬리 포락선 `Re = max(Mr, tail * Re)` → 빈별 공분산 이득(EMA 계수 `lam`):
+   `mm, mr` 평균, `cov = lam*cov + (1-lam)*(Mm-mm)*(Re-mr)`, `var = lam*var + (1-lam)*(Re-mr)^2`, `G = clip(cov/(var+1e-12), 0, None)`
+   → `Mc = max(Mm - beta*G*Re, 0)`. 지연을 모르면 `Mc = Mm`.
+3. 음량 인식 압축: `rms` = 마이크 프레임 시간영역 RMS, `scale = max(scale*0.9995, rms, floor)`,
+   `S = log1p(Mc/scale)`, `Sr = log1p(Mm/scale)`. 플럭스 두 개: 상쇄 후 `v`(→ `_ring`), 원본 `vr`(→ `_raw_ring`).
+4. 1초(`round(sr/hop)` 프레임)마다 지연 추정: 마이크·ref 최근 2초 파형으로 `estimate_delay`. ref 구간 최대 절댓값이 1e-6 이하면 건너뜀.
+   `confidence >= min_delay_conf`면 최근 9개 목록에 넣고 `delay = int(median)`.
+5. `update_s`마다 `_measure()`: 링이 한 번 찰 때까지 대기 → `clean_frac = sum(_ring) / (sum(_raw_ring)+1e-12)`,
+   `clean_frac < min_frac`면 return (마이크 온셋 대부분이 자기 소리) → 기존 max·crest 검사 → `_acf_peak_bpm(..., prior=self.bpm, prior_sigma_oct)`
+   → confidence 검사 → 데드밴드 → EMA.
+
+**스트림 정렬 (시제품에 없는 부분, 엔진용)**: 마이크와 ref는 따로 들어온다.
+- `process(mono)`(마이크), `process_ref(mono)`(출력)는 각자 FIFO 버퍼(최근 `max_delay_s + 2.5`초)에 붙이고 누적 샘플 수 `_mic_total`, `_ref_total`을 센다.
+  두 스트림은 같은 시각에 시작했다고 가정한다 (시작 시각 차이는 추정 지연에 흡수된다).
+- 마이크 프레임의 끝 절대 위치가 `E`일 때 ref 프레임은 절대 위치 `[E - delay - n_fft, E - delay)`. 버퍼 밖(너무 오래됨 또는 음수)이면 그 프레임은 상쇄 없이 처리.
+- 필요한 ref 샘플이 아직 안 왔으면(`_ref_total < E - delay`) 그 마이크 프레임 처리를 미룬다. 미처리 마이크가 1초를 넘으면 상쇄 없이 처리한다.
+- `process_ref`가 한 번도 불리지 않았으면(`_ref_total == 0`) 상쇄·지연 추정·`clean_frac` 검사 없이 동작한다 (테스트·오프라인 용도, `clean_frac`은 1.0).
+- 지연 추정용 2초 파형은 같은 절대 구간 `[E - 2*sr, E)`을 두 버퍼에서 꺼낸다. ref가 그 구간을 다 갖고 있지 않으면 그 회차는 건너뛴다.
+
+### engine.py / app.py
+
+- 트래커 생성·`process_ref`·리샘플러는 추가 1 그대로. `TempoTracker(SR, base_bpm, ratio_range=(1 - r, 1 + r))`.
+- `status()`: `bleed_gain` 제거, `clean_frac` 추가. 앱 상태줄은 추가 1 문구 유지.
+
+### 테스트 (tests/test_tempofollow_tempo.py)
+
+기존 테스트는 허용 오차 그대로 통과해야 한다. 단, 새 기본값(`min_confidence=0.2`, `prior_sigma_oct=0.1`) 때문에 기존 수렴 테스트가
+실패하면 테스트가 아니라 원인을 보고할 것 (예: 110→100은 사전 1.4σ).
+추가 1의 `test_estimate_delay_finds_echo`는 새 시그니처에 맞추고(`k`는 3000 ± 2), 아래를 추가:
+
+1. `test_estimate_delay_ignores_edge_leakage`: `ref` = 110·220·330 Hz 사인 합(각 진폭 0.3) + `rng.normal(0, 1e-3)`, 4초, 44.1 kHz.
+   `mic` = ref를 5292 샘플 지연. 두 신호의 같은 구간 2초(`[sr, 3*sr)`)로 `estimate_delay(mic, ref, 22050, 44100)` → `abs(k - 5292) <= 2`.
+   (창·대역 제한이 없던 이전 구현에서는 이 테스트가 실패하는지 확인해 보고서에 적을 것.)
+2. `test_quiet_sounds_do_not_move_tempo`: `TempoTracker(44100, 110)`. 먼저 `clicks(100, 8, 44100)`(진폭 0.8)으로 수렴시킨 뒤,
+   진폭을 0.004로 줄인 `clicks(125, 10, 44100)`에 `rng.normal(0, 0.001)`을 더해 넣는다 → `abs(t.bpm - 100) < 2` (작은 소리는 무시).
+3. `test_closed_loop_musical_bleed`: 드럼이 아닌 "음악" 블리드. 헬퍼 `tones(bpm, seconds, sr)`: 8분음표 격자에서 3-3-2 패턴(마디당 8분 8개 중 0, 3, 6번째)에
+   음 길이 0.25초, 어택 20 ms·지수 감쇠의 사인 화음(220, 277, 330 Hz 중 순환, 진폭 0.3)을 놓는다.
+   추가 1의 시뮬레이터에서 ref 클릭 대신 이 음을 **재생 비율에 맞춰 늘려** 쓴다: 미리 `tones(110, 60)`을 만들고 `WSOLA`로 매 스텝 현재 비율을 적용해 ref를 만든다
+   (`tempofollow.stretch`는 numpy만 쓰므로 테스트에서 import 가능). 블리드 지연 120 ms, 이득 1.0.
+   - 드러머 없음 45초: `abs(ratio - 1.0) < 0.005` 그리고 `tr.measurements == 0`.
+   - 드러머 `clicks(100, 45)` 포함: `abs(110 * ratio - 100) < 2.5`.
+4. 추가 1의 `test_closed_loop_bleed`(클릭 블리드)는 유지.
