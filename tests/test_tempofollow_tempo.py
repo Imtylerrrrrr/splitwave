@@ -80,15 +80,19 @@ def test_estimate_delay_finds_echo():
 
 
 def test_estimate_delay_ignores_edge_leakage():
-    # 저역 사인만 있는 구간: 창 없이 자르면 가장자리 누설이 lag 0 피크를 만든다
-    sr = 44100
-    rng = np.random.default_rng(0)
-    t = np.arange(4 * sr) / sr
-    ref = sum(0.3 * np.sin(2 * np.pi * f * t) for f in (110, 220, 330)) + rng.normal(0, 1e-3, len(t))
-    mic = np.concatenate([np.zeros(5292), ref])[:len(ref)]
-    k, _ = estimate_delay(mic[sr:3 * sr], ref[sr:3 * sr], 22050, sr)
-    assert abs(k - 5292) <= 2
-
+    """저역 위주 신호: 사각 창 가장자리 누설이 고역 빈에서 lag 0 상관을 만든다.
+    창·대역 제한이 없던 이전 구현은 여기서 0을 돌려줬다."""
+    sr, delay = 44100, 5292
+    rng = np.random.default_rng(11)
+    x = rng.normal(0, 1, sr * 4)
+    spec = np.fft.rfft(x)
+    spec[np.fft.rfftfreq(len(x), 1 / sr) > 300] = 0      # 300 Hz 아래만 남김
+    ref = np.fft.irfft(spec, len(x))
+    ref = (0.3 * ref / np.abs(ref).max() + rng.normal(0, 1e-5, len(x))).astype(np.float32)
+    mic = np.concatenate([np.zeros(delay, np.float32), ref])[:len(ref)]
+    k, conf = estimate_delay(mic[sr:3 * sr], ref[sr:3 * sr], 22050, sr)
+    assert abs(k - delay) <= 2
+    assert conf > 6
 
 def test_quiet_sounds_do_not_move_tempo():
     sr = 44100
@@ -186,3 +190,19 @@ def test_closed_loop_musical_bleed():
     # 드러머가 100 BPM이면 음악 블리드가 있어도 드러머를 따른다
     ratio, tr = simulate(clicks(100, 45, 44100), music=True)
     assert abs(110 * ratio - 100) < 2.5
+
+
+def test_delay_found_when_ref_arrives_late():
+    """출력 블록이 마이크 블록보다 늦게 도착해도(큐 순서) 지연을 찾아야 한다."""
+    sr, delay, step = 44100, 5292, 1024
+    rng = np.random.default_rng(7)
+    ref = rng.normal(0, 0.1, sr * 10).astype(np.float32)
+    mic = 0.5 * np.concatenate([np.zeros(delay, np.float32), ref])[:len(ref)]
+    t = TempoTracker(sr, 110)
+    for i in range(0, len(ref) - step, step):
+        t.process(mic[i:i + step])
+        if i >= 4 * step:                      # ref는 항상 4블록 늦게 들어온다
+            j = i - 4 * step
+            t.process_ref(ref[j:j + step])
+    assert t.bleed_delay_s is not None
+    assert abs(t.bleed_delay_s * sr - delay) <= 2

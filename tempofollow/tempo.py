@@ -207,9 +207,10 @@ class TempoTracker:
 
     def _update_delay(self, end) -> None:
         n = 2 * self.sr
+        end = min(end, self._ref_total)   # 출력 스트림이 마이크보다 늦게 도착해도 공통 구간으로 추정
         ms = end - n - (self._mic_total - self._keep)
         rs = end - n - (self._ref_total - self._keep)
-        if ms < 0 or rs < 0 or self._ref_total < end:
+        if ms < 0 or rs < 0:
             return    # 두 버퍼가 같은 2초 구간을 다 갖고 있지 않다
         r = self._rb[rs:rs + n]
         if np.abs(r).max() <= 1e-6:
