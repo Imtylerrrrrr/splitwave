@@ -156,7 +156,7 @@ class Engine:
             underflows=self.underflows,
             error=self.error,
             bleed_delay_ms=t.bleed_delay_s * 1000 if t and t.bleed_delay_s is not None else None,
-            bleed_gain=t.bleed_gain if t else 0.0,
+            clean_frac=t.clean_frac if t else 1.0,
         )
 
     # ── 스트림 콜백 (오디오 스레드) ──
