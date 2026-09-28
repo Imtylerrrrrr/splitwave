@@ -10,15 +10,32 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from common import resource_path, find_ffmpeg
+from library import base_dir, library_dir, list_tracks, menu_labels
 from tempofollow.engine import SR, Engine, default_devices, list_devices
 from tempofollow.tempo import estimate_bpm
 
 AUDIO_TYPES = [("오디오 파일", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac *.opus"), ("모든 파일", "*.*")]
 
+LIBRARY_GUIDE_ITEM = "(보관함에서 고르기)"
+LIBRARY_EMPTY_ITEM = "(받은 곡이 없어요)"
+
 
 def fmt_time(seconds: float) -> str:
     s = int(seconds)
     return f"{s // 60}:{s % 60:02d}"
+
+
+def library_menu(lib: str) -> dict[str, str]:
+    """보관함 드롭다운 항목. 안내 항목과 빈 목록 문구는 포함하지 않는다."""
+    return menu_labels(list_tracks(lib))
+
+
+def menu_values(items: dict[str, str]) -> list[str]:
+    """드롭다운에 표시할 목록. 항목이 있으면 안내 항목을 맨 앞에 붙이고,
+    없으면 빈 목록 문구 하나만 돌려준다."""
+    if items:
+        return [LIBRARY_GUIDE_ITEM] + list(items)
+    return [LIBRARY_EMPTY_ITEM]
 
 
 class App(ctk.CTk):
@@ -29,7 +46,7 @@ class App(ctk.CTk):
         ctk.set_default_color_theme(resource_path("assets/theme.json"))
 
         self.title("Tempo Follow")
-        self.geometry("480x600")
+        self.geometry("480x640")
         self.resizable(False, False)
         self._set_window_icon()
 
@@ -41,6 +58,7 @@ class App(ctk.CTk):
         self.outputs = {name: idx for idx, name in reversed(outputs)}
 
         self._build_ui()
+        self.on_refresh_library()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         if not find_ffmpeg():
@@ -79,6 +97,15 @@ class App(ctk.CTk):
         self.file_label = ctk.CTkLabel(row, text="선택 안 됨", anchor="w", font=small,
                                        text_color="gray70")
         self.file_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+        # 보관함
+        row = self._row("보관함")
+        ctk.CTkButton(row, text="새로고침", width=90, command=self.on_refresh_library,
+                      **gray).pack(side="right")
+        self.library_menu = ctk.CTkOptionMenu(
+            row, values=[LIBRARY_EMPTY_ITEM], width=260, dynamic_resizing=False,
+            command=self.on_choose_library)
+        self.library_menu.pack(side="left", padx=(10, 0))
 
         # 2. 기본 BPM
         row = self._row("기본 BPM")
@@ -171,6 +198,9 @@ class App(ctk.CTk):
         path = filedialog.askopenfilename(filetypes=AUDIO_TYPES)
         if not path or self.running:
             return
+        self._load_file(path)
+
+    def _load_file(self, path):
         self.file_label.configure(text=os.path.basename(path))
         self.set_status("불러오는 중…")
 
@@ -184,6 +214,22 @@ class App(ctk.CTk):
             self.after(0, lambda: self.set_status(msg))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def on_refresh_library(self):
+        lib = library_dir(base_dir())
+        self.library_items = library_menu(lib)
+        values = menu_values(self.library_items)
+        self.library_menu.configure(values=values)
+        self.library_menu.set(values[0])
+
+    def on_choose_library(self, value):
+        if self.running:
+            self.library_menu.set(menu_values(self.library_items)[0])
+            return
+        path = self.library_items.get(value)
+        if path is None:
+            return
+        self._load_file(path)
 
     def on_estimate(self):
         audio = self.engine.audio
