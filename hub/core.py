@@ -181,6 +181,20 @@ def child_env() -> dict[str, str]:
     return env
 
 
+def spawn(cmd: Sequence[str], cwd: str | None = None) -> subprocess.Popen:
+    """PyInstaller 로 만든 다른 프로그램을 띄운다.
+    허브의 환경변수와 DLL 검색 경로가 자식에게 넘어가지 않게 하고, 띄운 뒤 허브 쪽 경로는 되돌린다."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+    try:
+        return subprocess.Popen(list(cmd), cwd=cwd, env=child_env())
+    finally:
+        if os.name == "nt" and meipass:
+            ctypes.windll.kernel32.SetDllDirectoryW(meipass)
+
+
 def check_final_url(url: str, https_only: bool) -> None:
     if https_only and not url.lower().startswith("https://"):
         raise HubError(MSG_NETWORK)
@@ -470,11 +484,8 @@ class Hub:
         exe = self._app_dir(app_id) / rec["exe"] if rec else None
         if exe is None or not exe.is_file():
             raise HubError(MSG_NOT_INSTALLED)
-        if os.name == "nt":
-            import ctypes
-            ctypes.windll.kernel32.SetDllDirectoryW(None)
         self.log(f"launch {app_id}")
-        return subprocess.Popen([str(exe), *args], cwd=str(exe.parent), env=child_env())
+        return spawn([str(exe), *args], cwd=str(exe.parent))
 
     # 허브 자체 업데이트
 

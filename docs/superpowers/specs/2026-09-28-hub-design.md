@@ -166,7 +166,11 @@ for k in list(env):
 if os.name == "nt":
     ctypes.windll.kernel32.SetDllDirectoryW(None)
 subprocess.Popen([exe, *args], cwd=exe.parent, env=env)
+if os.name == "nt" and hasattr(sys, "_MEIPASS"):
+    ctypes.windll.kernel32.SetDllDirectoryW(sys._MEIPASS)   # 허브 쪽 검색 경로는 되돌린다
 ```
+
+`hub.core.spawn(cmd, cwd=None)` 이 이 규칙을 구현한다. 앱 실행과 허브 재시작이 모두 이것을 쓴다.
 
 이유: 허브도 앱도 PyInstaller 빌드라, 허브의 환경변수와 DLL 검색 경로가 자식에게 넘어가면 자식이 허브의 임시 폴더를 자기 것으로 착각한다.
 
@@ -181,7 +185,7 @@ subprocess.Popen([exe, *args], cwd=exe.parent, env=env)
 
 ```
 splitwave-hub [--root DIR] [--base URL]                 화면 실행
-splitwave-hub --selftest                                0 = 정상
+splitwave-hub --selftest [--root DIR]                   0 = 정상. 기록은 <root>/hub.log (root 기본값: 임시 폴더)
 splitwave-hub cli [--root DIR] [--base URL] status
 splitwave-hub cli [--root DIR] [--base URL] install APP
 splitwave-hub cli [--root DIR] [--base URL] remove APP
@@ -198,7 +202,11 @@ splitwave-hub cli [--root DIR] [--base URL] run APP [--wait] [-- ARGS...]
 2. `import customtkinter` 가 되는지, `ssl.create_default_context()` 가 되는지.
 3. 임시 폴더에 가짜 릴리스(zip part 1개 + 일반 파일 part 1개)를 만들고 127.0.0.1 임시 포트의 HTTP 서버로 제공 →
    설치 → 파일 확인 → part 하나만 바꾼 매니페스트로 업데이트 → 바뀐 part 만 받았는지(서버 요청 기록) 확인 → 삭제 → 파일 없음 확인.
-4. 실패하면 이유 한 줄을 stderr 와 hub.log 에 쓰고 1.
+4. 실패하면 이유 한 줄을 stderr 와 hub.log 에 쓰고 1. 예상 못 한 예외도 잡아서 같은 방식으로 기록한다.
+5. selftest 는 사용자의 실제 설치 폴더를 건드리지 않는다 (가짜 릴리스와 설치는 전부 임시 폴더).
+
+앱 쪽 selftest 기록: 환경변수 `SELFTEST_LOG` 가 있으면 `tempofollow_main.py --selftest` 는 stdout 과 stderr 를 그 파일로 보낸다
+(창 없는 빌드는 콘솔 출력이 보이지 않아서, CI 가 실패 이유를 읽을 수 있게).
 
 ## 화면
 
@@ -212,7 +220,7 @@ splitwave-hub cli [--root DIR] [--base URL] run APP [--wait] [-- ARGS...]
   - 업데이트 있음: `업데이트`, `실행`, `삭제`
 - 맨 아래: 진행 막대와 상태 문구. 작업 중에는 모든 버튼 비활성.
 - 작업은 별도 스레드에서, 화면 갱신은 `after` 로.
-- 목록을 못 가져와도 state 에 있는 앱은 카드로 보여 주고 `실행`, `삭제` 가 된다. 상태 문구 끝에 `(업데이트 확인 실패)`.
+- 목록을 못 가져와도 state 에 있는 앱은 카드로 보여 주고 `실행`, `삭제` 가 된다. 상태 문구는 `설치됨 v1.1.0 (업데이트 확인 실패)` (확인을 못 했으므로 `최신` 이라고 하지 않는다).
 
 상태 문구:
 
