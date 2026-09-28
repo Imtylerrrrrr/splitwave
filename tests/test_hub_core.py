@@ -370,7 +370,12 @@ def evil_zip(bad_name, symlink=False):
                                           ("C:/x", False), ("link", True)])
 def test_zip_path_violation(hub, srv, tmp_path, name, symlink):
     data = evil_zip(name, symlink)
-    assert zipfile.ZipFile(io.BytesIO(data)).namelist()[1] == name
+    # 사전 확인: 만든 zip 에 위반 이름이 실제로 들어갔는지.
+    # Windows 의 zipfile 은 ZipInfo 를 만들 때 \\ 를 / 로 바꿔 저장하므로 (그 경우 "../x" 와 같은 사례가 된다) 구분자만 맞춰 비교한다.
+    stored = zipfile.ZipFile(io.BytesIO(data)).namelist()[1]
+    assert stored.replace("\\", "/") == name.replace("\\", "/")
+    if os.sep == "/":
+        assert stored == name
     (srv.dir / "app.zip").write_bytes(data)
     srv.publish([{"id": "app", "file": "app.zip", "size": len(data), "unpacked": 8,
                   "sha256": sha(data), "content": H}])
