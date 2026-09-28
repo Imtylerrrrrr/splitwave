@@ -83,6 +83,11 @@ def _run_cli(args: argparse.Namespace) -> int:
         hub.log(str(e))
         _out(sys.stderr, str(e))
         return 1
+    except Exception as e:
+        # 예: 백신이 실행파일을 막아 실행 자체가 실패한 경우. 스택 대신 한 줄로 남긴다.
+        hub.log(f"unexpected error: {e!r}")
+        _out(sys.stderr, f"예상하지 못한 오류가 났어요. {e}")
+        return 1
 
 
 def _cmd_status(hub: Hub) -> None:

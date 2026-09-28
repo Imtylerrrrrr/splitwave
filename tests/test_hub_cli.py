@@ -169,3 +169,21 @@ def test_app_pure_functions():
             == "업데이트 있음 v1.1.0 → v1.2.0 · 받을 크기 47 MB")
     assert (hub_app.status_text(Status(UP_TO_DATE, "1.1.0", 0), None, True)
             == "설치됨 v1.1.0 (업데이트 확인 실패)")
+
+
+def test_cli_run_reports_launch_failure_in_one_line(tmp_path, srv, monkeypatch, capsys):
+    """실행 자체가 실패하면(백신 차단 등) 스택 대신 한 줄 문구와 종료 코드 1."""
+    srv.publish()
+    root = tmp_path / "root"
+    assert cli.main(["--root", str(root), "--base", srv.base, "cli", "install", "demo"]) == 0
+
+    def boom(*a, **k):
+        raise PermissionError(13, "Access is denied")
+
+    import hub.core as core
+    monkeypatch.setattr(core.subprocess, "Popen", boom)
+    capsys.readouterr()
+    assert cli.main(["--root", str(root), "--base", srv.base, "cli", "run", "demo"]) == 1
+    err = capsys.readouterr().err
+    assert "예상하지 못한 오류가 났어요." in err and "Traceback" not in err
+    assert "unexpected error" in (root / "hub.log").read_text(encoding="utf-8")

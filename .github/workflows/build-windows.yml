@@ -4,6 +4,9 @@ name: Build Windows EXE
 #  - ffmpeg: 오디오 전용 ffmpeg 를 공식 소스에서 정적 빌드 (tools/ffmpeg/build.sh). lite/full 이 이걸 번들한다.
 #  - lite: 다운로드만. 단일 exe (ffmpeg 번들)
 #  - full: 스템 분리 포함. torch 가 커서 onedir 폴더를 zip 으로 (모델 가중치 hf_home 포함)
+#  - tempofollow: 템포 추종 사이드 앱. onedir 폴더를 zip 으로
+#  - hub: 설치·업데이트 관리자. 단일 exe
+#  - package: 릴리스 파일을 모아 manifest.json 을 만들고, 빌드된 허브로 빌드된 앱을 설치·실행·삭제해 본다
 # 맥에서는 gh run download 로 내려받으면 된다.
 
 on:
@@ -212,4 +215,172 @@ jobs:
         with:
           name: splitwave-full-zip
           path: splitwave-full.zip
+          if-no-files-found: error
+
+  # 템포 추종 사이드 앱. 오디오 장치가 없는 러너라서 selftest 는 스트림을 열지 않는다.
+  build-tempofollow:
+    needs: build-ffmpeg
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-tempofollow.txt pyinstaller
+
+      - name: Get audio-only ffmpeg (built by build-ffmpeg job)
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-audio
+          path: .
+
+      - name: Build (PyInstaller, onedir)
+        shell: pwsh
+        run: |
+          pyinstaller --onedir --noconsole `
+            --name "tempofollow" `
+            --icon assets/icon.ico `
+            --add-data "assets;assets" `
+            --collect-all customtkinter `
+            --add-binary "ffmpeg.exe;." `
+            --exclude-module PIL._avif --exclude-module PIL._webp `
+            tempofollow_main.py
+
+      - name: Selftest built exe
+        shell: pwsh
+        env:
+          SELFTEST_LOG: ${{ github.workspace }}\selftest.log
+        run: |
+          $p = Start-Process -FilePath ".\dist\tempofollow\tempofollow.exe" -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          if (Test-Path selftest.log) { Get-Content selftest.log }
+          if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
+
+      - name: Zip
+        shell: pwsh
+        run: 7z a -tzip -mx=9 tempofollow.zip .\dist\tempofollow
+
+      - name: Report size
+        shell: pwsh
+        run: Get-Item tempofollow.zip | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tempofollow-zip
+          path: tempofollow.zip
+          if-no-files-found: error
+
+  # 허브(설치·업데이트 관리자). 앱을 담지 않고 릴리스에서 받아 온다.
+  build-hub:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install customtkinter pillow pyinstaller pytest
+
+      - name: Unit tests (hub, manifest tool)
+        run: python -m pytest -q tests/test_hub_core.py tests/test_hub_cli.py tests/test_make_manifest.py
+
+      - name: Build EXE (PyInstaller, onefile)
+        shell: pwsh
+        run: |
+          pyinstaller --onefile --noconsole `
+            --name "splitwave-hub" `
+            --icon assets/icon.ico `
+            --add-data "assets;assets" `
+            --collect-all customtkinter `
+            --exclude-module PIL._avif --exclude-module PIL._webp `
+            hub_main.py
+
+      - name: Selftest built exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath ".\dist\splitwave-hub.exe" -ArgumentList "--selftest","--root","$PWD\selftest-root" -Wait -PassThru -NoNewWindow
+          if (Test-Path selftest-root\hub.log) { Get-Content selftest-root\hub.log }
+          if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
+
+      - name: Report size
+        shell: pwsh
+        run: Get-Item dist\splitwave-hub.exe | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: splitwave-hub-exe
+          path: dist/splitwave-hub.exe
+          if-no-files-found: error
+
+  # 릴리스에 올릴 파일을 한곳에 모으고 매니페스트를 만든 뒤,
+  # 빌드된 허브로 빌드된 앱을 실제로 설치, 실행(selftest), 삭제해 본다.
+  package:
+    needs: [build-lite, build-full, build-tempofollow, build-hub]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files and build manifest
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory release | Out-Null
+          Copy-Item artifacts\splitwave-lite-exe\splitwave.exe release\
+          Copy-Item artifacts\splitwave-full-zip\splitwave-full.zip release\
+          Copy-Item artifacts\tempofollow-zip\tempofollow.zip release\
+          Copy-Item artifacts\splitwave-hub-exe\splitwave-hub.exe release\
+          $v = (Get-Content VERSION).Trim()
+          python tools/make_manifest.py --version $v --apps tools/apps.json --dir release
+          if ($LASTEXITCODE -ne 0) { throw "make_manifest failed" }
+          Get-ChildItem release | Select-Object Name, Length
+          Get-Content release\manifest.json
+          Get-Content release\SHA256SUMS.txt
+
+      - name: End-to-end (built hub installs, runs and removes built apps)
+        shell: pwsh
+        env:
+          HF_HUB_OFFLINE: "1"
+          SELFTEST_LOG: ${{ github.workspace }}\e2e-selftest.log
+        run: |
+          $srv = Start-Process python -ArgumentList "-m","http.server","8765","--bind","127.0.0.1","--directory","release" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+          $hub = ".\release\splitwave-hub.exe"
+          $common = @("cli","--root","$PWD\e2e","--base","http://127.0.0.1:8765")
+          function Hub([string[]]$rest) {
+            $p = Start-Process -FilePath $hub -ArgumentList ($common + $rest) -Wait -PassThru -NoNewWindow
+            return $p.ExitCode
+          }
+          $apps = "splitwave","splitwave-full","tempofollow"
+          try {
+            foreach ($app in $apps) {
+              if ((Hub @("install",$app)) -ne 0) { throw "install failed: $app" }
+              if ((Hub @("run",$app,"--wait","--","--selftest")) -ne 0) { throw "selftest via hub failed: $app" }
+            }
+            if ((Hub @("install","splitwave")) -ne 0) { throw "second install (no-op) failed" }
+            foreach ($app in $apps) {
+              if ((Hub @("remove",$app)) -ne 0) { throw "remove failed: $app" }
+              if (Test-Path "e2e\apps\$app") { throw "files left after remove: $app" }
+            }
+          } finally {
+            if (Test-Path e2e-selftest.log) { Get-Content e2e-selftest.log }
+            if (Test-Path e2e\hub.log) { Get-Content e2e\hub.log }
+            Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
           if-no-files-found: error

@@ -42,7 +42,14 @@ def buttons_for(state: str) -> list[str]:
 
 
 def run(root: Path | None, base: str | None) -> None:
-    App(root, base).mainloop()
+    try:
+        App(root, base).mainloop()
+    except Exception as e:
+        # 최후의 방어선: 창을 만들다 실패해도 이유는 보여 준다 (기존 앱과 같은 방식)
+        try:
+            messagebox.showerror("오류", f"프로그램 실행 중 오류가 발생했습니다.\n{e}")
+        except Exception:
+            print(f"오류: {e}", file=sys.stderr)
 
 
 class App(ctk.CTk):
