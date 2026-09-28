@@ -139,13 +139,15 @@ VERSION          릴리스 버전
 ### 릴리스
 
 ```bash
-# 1) VERSION 을 올리고 main 에 push, CI 통과 확인
-# 2) 묶음 아티팩트를 받아 그대로 올린다
-gh run download <run-id> -n release -D dist/release
-gh release create "v$(cat VERSION)" dist/release/* --title "v$(cat VERSION)"
+# 1) VERSION 을 올리고 docs/release-notes/v<버전>.md 를 쓴 뒤 main 에 push
+# 2) 같은 커밋에 버전 태그를 올린다
+git tag "v$(cat VERSION)" && git push origin "v$(cat VERSION)"
 ```
 
-허브는 `releases/latest/download/manifest.json`을 읽어요. 그래서 `manifest.json`이 없는 릴리스를 최신으로 올리면 허브가 목록을 못 가져와요.
+태그를 올리면 Actions 가 빌드와 검증을 다시 돌리고, 통과하면 `release` 작업이 해시를 대조한 뒤 GitHub Release 를 게시해요.
+태그와 `VERSION` 이 다르거나 릴리스 노트 파일이 없으면 게시하지 않아요.
+
+허브는 `releases/latest/download/manifest.json` 을 읽어요. 그래서 `manifest.json` 이 없는 릴리스를 최신으로 올리면 허브가 목록을 못 가져와요.
 
 Windows에서 직접 빌드하려면 (`ffmpeg.exe`를 `main.py` 옆에 둔 상태에서. 어떤 ffmpeg든 되지만 CI는 위의 오디오 전용 빌드를 써요):
 

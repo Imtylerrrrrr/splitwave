@@ -260,7 +260,8 @@ CI (`.github/workflows/build-windows.yml`) 에 추가:
 - `package` (위 빌드 전부 필요): 자산을 `release/` 에 모으고 `tools/make_manifest.py` 실행 →
   로컬 HTTP 서버로 `release/` 를 제공하고 빌드된 허브로 세 앱을 설치, `run --wait -- --selftest`, 삭제 → `release` 아티팩트 업로드.
 
-릴리스: `VERSION` 을 올리고 main 에 푸시 → CI 통과 → `gh run download -n release` → `gh release create v<VERSION> release/*`.
+릴리스: `VERSION` 을 올리고 `docs/release-notes/v<VERSION>.md` 를 쓴 뒤 main 에 푸시하고 같은 커밋에 태그 `v<VERSION>` 을 올린다.
+태그 빌드의 `release` 작업이 태그와 VERSION 일치, 노트 파일, 해시를 확인하고 게시한다 (사람 손을 거치지 않는다).
 
 ## 2단계 (바뀐 부분만 받기)
 
