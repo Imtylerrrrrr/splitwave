@@ -120,7 +120,7 @@ jobs:
       - name: Install dependencies (with demucs + torch CPU)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-stems.txt pyinstaller
+          pip install -r requirements-stems.txt pyinstaller -c constraints-full.txt
 
       - name: Get audio-only ffmpeg (built by build-ffmpeg job)
         uses: actions/download-artifact@v4
@@ -288,7 +288,7 @@ jobs:
           pip install customtkinter pillow pyinstaller pytest
 
       - name: Unit tests (hub, manifest tool)
-        run: python -m pytest -q tests/test_hub_core.py tests/test_hub_cli.py tests/test_make_manifest.py
+        run: python -m pytest -q tests/test_hub_core.py tests/test_hub_cli.py tests/test_make_manifest.py tests/test_split_parts.py
 
       - name: Build EXE (PyInstaller, onefile)
         shell: pwsh
@@ -341,6 +341,9 @@ jobs:
           Copy-Item artifacts\splitwave-full-zip\splitwave-full.zip release\
           Copy-Item artifacts\tempofollow-zip\tempofollow.zip release\
           Copy-Item artifacts\splitwave-hub-exe\splitwave-hub.exe release\
+          # 풀 버전을 허브용 묶음으로 나눈다 (잘 안 바뀌는 torch, 모델, 실행 환경과 매번 바뀌는 앱 본체)
+          python tools/split_parts.py --apps tools/apps.json --dir release
+          if ($LASTEXITCODE -ne 0) { throw "split_parts failed" }
           $v = (Get-Content VERSION).Trim()
           python tools/make_manifest.py --version $v --apps tools/apps.json --dir release
           if ($LASTEXITCODE -ne 0) { throw "make_manifest failed" }

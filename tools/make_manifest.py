@@ -132,7 +132,7 @@ def write_sums(directory: str) -> None:
         name for name in os.listdir(directory)
         if name != out_name and os.path.isfile(os.path.join(directory, name)))
     lines = [f"{_sha256_file(os.path.join(directory, name))}  {name}\n" for name in names]
-    with open(os.path.join(directory, out_name), "w", encoding="utf-8") as f:
+    with open(os.path.join(directory, out_name), "w", encoding="utf-8", newline="\n") as f:
         f.writelines(lines)
 
 
@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = build_manifest(args.version, apps_def, args.dir)
 
-    with open(os.path.join(args.dir, "manifest.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.dir, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
     write_sums(args.dir)

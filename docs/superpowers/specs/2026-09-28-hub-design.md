@@ -264,19 +264,26 @@ CI (`.github/workflows/build-windows.yml`) 에 추가:
 
 ## 2단계 (바뀐 부분만 받기)
 
-`splitwave-full` 을 세 part 로 나눈다. 허브 코드는 바뀌지 않는다.
+`splitwave-full` 을 네 part 로 나눈다 (`tools/split_parts.py`, 규칙은 `tools/apps.json` 의 `split`). 허브 코드는 바뀌지 않는다.
+직접 받는 사람을 위한 통짜 `splitwave-full.zip` 도 릴리스에 그대로 둔다.
 
-| part | 내용 | 압축 크기 (v1.0.3 실측) |
-|---|---|---|
-| `torch` | `_internal/torch*`, `_internal/numpy*` | 105 MB |
-| `model` | `_internal/hf_home` | 51 MB |
-| `app` | 나머지 | 53 MB |
+| part | 내용 | 받는 크기 (v1.1.0 실측) | 2026-09-25 빌드와 내용 동일 |
+|---|---|---|---|
+| `torch` | `_internal/torch/`, `_internal/numpy/`, `_internal/numpy.libs/` | 108.5 MB | 같음 |
+| `model` | `_internal/hf_home/` | 50.8 MB | 같음 |
+| `runtime` | 나머지 (파이썬, Tcl/Tk, ffmpeg 등) | 21.7 MB | 같음 |
+| `app` | 실행파일, `base_library.zip`, `*.dist-info/` | 33.1 MB | 다름 |
 
-전제: CI 에서 torch, numpy 버전을 고정해야 `torch` part 의 `content` 가 빌드마다 같다.
+- 업데이트는 보통 `app` 33 MB 만 받는다 (통짜는 209 MB).
+- 처음 설치는 214 MB 로 통짜보다 5 MB 크다 (7z 대신 파이썬 zlib 로 압축해서). 테스트 가능한 단일 경로를 택한 대가.
+- `*.dist-info/RECORD` 는 빌드마다 달라져서 torch 쪽이 아니라 `app` 에 넣는다.
+- torch, numpy 버전은 `constraints-full.txt` 로 고정한다.
+- 어느 part 가 바뀌든 허브는 `content` 로 판단하므로, 고정이 풀려도 결과는 "더 받는다" 일 뿐 설치가 틀어지지는 않는다.
 
 ## 검증 계획
 
 - 단위 테스트: 로컬 HTTP 서버와 합성 zip 으로 설치, 업데이트(바뀐 part 만), 삭제, 해시 불일치, zip 경로 위반, 매니페스트 검증, 상태 판정.
-- 산출물 검증 (Mac): 실제 `dist/ci/` 파일로 매니페스트를 만들고 허브 코어로 설치해 파일 수와 총 바이트가 zip 과 같은지 확인.
+- 산출물 검증 (Mac): 실제 빌드 파일로 매니페스트를 만들고 허브 코어로 설치해 파일 수와 총 바이트가 zip 과 같은지 확인.
+  옛 빌드 설치 → 새 빌드로 업데이트 때 `app` 하나만 받고 결과가 새 zip 과 파일 단위로 같은지 확인.
 - CI (Windows 서버): 빌드된 허브가 빌드된 앱을 설치하고 실행(selftest)까지.
 - 사람만 확인 가능: 경고창, 백신 반응, 화면 모양, 실제 오디오 장치.

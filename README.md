@@ -9,13 +9,26 @@
 
 ## 다운로드
 
+**`splitwave-hub.exe` 하나만 받으면 돼요.** 허브를 열면 아래 앱을 버튼으로 설치, 업데이트, 삭제, 실행할 수 있어요.
+
+| 앱 | 기능 | 받는 크기 |
+|---|---|---|
+| Splitwave | 다운로드 + 키 조정 | 약 27 MB |
+| Splitwave + 스템 분리 | 위 기능 + **스템 분리** | 약 214 MB (분리 모델 포함). 업데이트는 보통 33 MB |
+| Tempo Follow (실험) | 드럼 템포를 따라가며 곡 재생 | 약 32 MB |
+
+→ [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases/latest)에서 `splitwave-hub.exe`(약 15 MB)를 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
+
+- 앱은 `%LOCALAPPDATA%\Splitwave` 아래에 설치돼요. 관리자 권한이 필요 없어요.
+- 새 버전이 나오면 허브에 `업데이트` 버튼이 보여요. 받은 파일은 허브가 해시를 자동으로 대조해요.
+- Splitwave 두 가지는 하나만 설치하면 돼요. 스템 분리가 필요하면 아래쪽 것을 고르세요.
+
+허브 없이 직접 받고 싶으면 같은 페이지에서 받을 수 있어요.
+
 | | 라이트 `splitwave.exe` | 풀 `splitwave-full.zip` |
 |---|---|---|
-| 기능 | 다운로드 + 키 조정 | 라이트 + **스템 분리** |
 | 용량 | 약 27 MB | 약 209 MB (분리 모델 포함) |
 | 실행 | exe 더블클릭 | 압축 풀고 **폴더 안의** `splitwave-full.exe` 실행 (exe만 꺼내면 안 됨) |
-
-→ [Releases 페이지](https://github.com/Imtylerrrrrr/splitwave/releases)에서 받으세요. 파이썬·FFmpeg 설치 필요 없어요.
 
 > **처음 실행하면 Windows가 "알 수 없는 게시자" 경고를 띄워요.** 개인이 만든 프로그램이라 유료 서명 인증서가 없어서 그래요. "**추가 정보 → 실행**"을 누르면 됩니다.
 
@@ -47,7 +60,8 @@
 
 ## 자주 묻는 것
 
-- **다운로드가 갑자기 안 돼요** — 유튜브가 바뀌면 yt-dlp가 깨져요. 새 버전이 Releases에 올라오면 받으세요. (소스로 쓰는 경우 `pip install -U yt-dlp`)
+- **다운로드가 갑자기 안 돼요** — 유튜브가 바뀌면 yt-dlp가 깨져요. 허브에서 `업데이트`를 누르거나 새 버전을 Releases에서 받으세요. (소스로 쓰는 경우 `pip install -U yt-dlp`)
+- **"유튜브가 이 인터넷 연결을 자동 프로그램으로 의심해서 막았습니다"라고 나와요** — 프로그램 고장이 아니라 유튜브가 그 인터넷 회선을 막은 거예요. 휴대폰 핫스팟처럼 다른 인터넷으로 바꾸거나 몇 시간 뒤에 다시 시도하세요. 새 버전으로 바꿔도 해결되지 않아요.
 - **맥에서는?** — 실행파일은 Windows용이에요. 맥은 아래 개발자용 항목대로 소스로 실행하면 됩니다.
 - **인터넷 없어도 되나요?** — 유튜브 다운로드만 인터넷이 필요해요. 파일 분리·키 조정은 오프라인에서 돼요.
 
@@ -56,7 +70,7 @@
 ## 사이드 앱: 템포 추종 재생 (실험)
 
 드러머가 치는 박자를 마이크로 듣고 템포(BPM)를 실시간으로 추정해서, 곡을 그 템포에 맞춰 **음높이는 그대로 두고 속도만 바꿔** 재생합니다.
-스템 분리로 드럼을 뺀 곡을 틀어 놓고 드러머가 자기 템포로 치면 곡이 따라오는 용도예요. 아직 실행파일 배포는 없고 소스로만 실행할 수 있어요.
+스템 분리로 드럼을 뺀 곡을 틀어 놓고 드러머가 자기 템포로 치면 곡이 따라오는 용도예요. Windows 는 허브에서 `Tempo Follow (실험)`을 설치하면 되고, 소스로도 실행할 수 있어요.
 
 ```bash
 pip install -r requirements-tempofollow.txt
@@ -100,19 +114,38 @@ stems_page.py    스템 분리 탭 (demucs 없으면 안내만 표시)
 separator.py     Demucs htdemucs_6s 호출. UI 의존 없음
 common.py        공용 헬퍼 (ffmpeg 탐색, 키 조정 필터, 에러 문구 …)
 assets/          로고·아이콘·테마. make_assets.py 로 재생성
+tempofollow/     사이드 앱: 템포 추종 재생 (진입 스크립트 tempofollow_main.py)
+hub/             허브: 설치·업데이트 관리자 (진입 스크립트 hub_main.py). core.py 는 표준 라이브러리만 사용
+tools/           빌드 도구 (ffmpeg 빌드, 가중치 정리, make_manifest.py, apps.json)
+VERSION          릴리스 버전
 ```
 
 풀/라이트 구분은 코드가 아니라 `import demucs` 가능 여부 하나로만 갈려요.
 
 ### 빌드
 
-`main`에 push하면 GitHub Actions가 세 단계로 만들어요 (`.github/workflows/build-windows.yml`):
+`main`에 push하면 GitHub Actions가 아래 순서로 만들어요 (`.github/workflows/build-windows.yml`):
 
 - `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 11 MB 남짓이에요 (기존 범용 빌드는 159 MB). `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요.
 - `build-lite` → `splitwave.exe` (PyInstaller onefile, ffmpeg 번들)
 - `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들. 가중치는 한 벌만 넣고, `torch.compile`·ONNX 등 추론에 안 쓰는 모듈은 제외해요)
 
-둘 다 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다 (풀은 번들 가중치 파일이 있는지 확인하고 실제로 1초짜리 분리까지 돌려요. 최종 zip 안에 가중치가 들어 있는지도 따로 검사해요). 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
+- `build-tempofollow` → `tempofollow.zip` (onedir, ffmpeg 번들)
+- `build-hub` → `splitwave-hub.exe` (onefile. 앱을 담지 않고 릴리스에서 받아 와요)
+- `package` → 위 파일을 모으고, 풀 버전을 허브용 묶음 넷으로 나눈 뒤(`tools/split_parts.py`. torch·모델처럼 잘 안 바뀌는 것을 따로 묶어 업데이트 때 바뀐 묶음만 받게 해요), `manifest.json`(허브가 읽는 설치 목록)과 `SHA256SUMS.txt`를 만들고, 빌드된 허브로 빌드된 앱 세 개를 실제로 설치, 실행(`--selftest`), 삭제해 봐요
+
+앱은 모두 빌드 직후 `exe --selftest`를 실행해 번들이 실제로 동작하는지 확인합니다 (풀은 번들 가중치 파일이 있는지 확인하고 실제로 1초짜리 분리까지 돌려요. 최종 zip 안에 가중치가 들어 있는지도 따로 검사해요). 아티팩트는 Actions 탭에서 `gh run download`로 받으면 돼요.
+
+### 릴리스
+
+```bash
+# 1) VERSION 을 올리고 main 에 push, CI 통과 확인
+# 2) 묶음 아티팩트를 받아 그대로 올린다
+gh run download <run-id> -n release -D dist/release
+gh release create "v$(cat VERSION)" dist/release/* --title "v$(cat VERSION)"
+```
+
+허브는 `releases/latest/download/manifest.json`을 읽어요. 그래서 `manifest.json`이 없는 릴리스를 최신으로 올리면 허브가 목록을 못 가져와요.
 
 Windows에서 직접 빌드하려면 (`ffmpeg.exe`를 `main.py` 옆에 둔 상태에서. 어떤 ffmpeg든 되지만 CI는 위의 오디오 전용 빌드를 써요):
 

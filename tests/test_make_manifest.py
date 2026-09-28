@@ -156,3 +156,22 @@ def test_repo_apps_json_has_three_apps():
     ids = [app["id"] for app in apps_def["apps"]]
     assert len(ids) == 3
     assert set(ids) == {"splitwave", "splitwave-full", "tempofollow"}
+
+
+def test_outputs_use_lf_line_endings_on_every_platform(tmp_path, monkeypatch):
+    """Windows 러너에서 만들어도 줄바꿈은 LF. CRLF 면 `shasum -c` 가 파일 이름 끝의 \\r 때문에 파일을 못 찾는다."""
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"b")
+    import io
+    real_open = open
+
+    def windows_like_open(file, mode="r", *a, **k):
+        # 텍스트 쓰기에서 newline 을 지정하지 않으면 Windows 처럼 \n 을 \r\n 으로 바꾼다
+        if "w" in mode and "b" not in mode and k.get("newline") is None:
+            k["newline"] = "\r\n"
+        return real_open(file, mode, *a, **k)
+
+    monkeypatch.setattr(make_manifest, "open", windows_like_open, raising=False)
+    make_manifest.write_sums(str(tmp_path))
+    data = (tmp_path / "SHA256SUMS.txt").read_bytes()
+    assert b"\r" not in data and data.count(b"\n") == 2
