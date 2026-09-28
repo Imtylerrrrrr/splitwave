@@ -141,6 +141,13 @@ def translate_error(err: Exception) -> str:
     """yt-dlp/네트워크 에러를 친절한 한국어 메시지로 변환."""
     msg = str(err)
     low = msg.lower()
+    if "not a bot" in low:
+        # 유튜브가 접속 주소(IP)를 자동 프로그램으로 의심해 로그인을 요구하는 경우.
+        # 프로그램이나 영상 문제가 아니라서 다른 회선으로 바꾸거나 기다리는 수밖에 없다.
+        return ("유튜브가 이 인터넷 연결을 자동 프로그램으로 의심해서 막았습니다.\n"
+                "프로그램 고장이 아니라 유튜브 쪽 차단이에요.\n\n"
+                "휴대폰 핫스팟처럼 다른 인터넷으로 바꿔서 다시 시도하거나,\n"
+                "몇 시간 뒤에 다시 시도해 주세요.")
     if "sign in to confirm your age" in low or "age" in low and "restrict" in low:
         return "연령 제한이 걸린 영상이라 다운로드할 수 없습니다. (로그인 필요 영상)"
     if "private video" in low or "private" in low:

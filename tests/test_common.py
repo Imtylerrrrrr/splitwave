@@ -34,3 +34,23 @@ def test_common_has_no_gui_imports():
     import re
     src = open(common.__file__, encoding="utf-8").read()
     assert re.search(r"^\s*(import|from)\s+(customtkinter|yt_dlp)\b", src, re.M) is None
+
+
+BOT_CHECK = ("ERROR: [youtube] RNgv9fU8v7g: Sign in to confirm you’re not a bot. "
+             "Use --cookies-from-browser or --cookies for the authentication. "
+             "See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  "
+             "for how to manually pass cookies. Also see  "
+             "https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies  "
+             "for tips on effectively exporting YouTube cookies")
+
+
+def test_translate_error_explains_youtube_bot_check():
+    msg = common.translate_error(Exception(BOT_CHECK))
+    assert "유튜브가 이 인터넷 연결을" in msg
+    assert "다른 인터넷" in msg
+    assert "cookies" not in msg          # 원문 영어 안내를 그대로 보여 주지 않는다
+
+
+def test_translate_error_keeps_age_restriction_message():
+    msg = common.translate_error(Exception("Sign in to confirm your age. This video may be inappropriate"))
+    assert "연령 제한" in msg
