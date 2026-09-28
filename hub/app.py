@@ -158,7 +158,8 @@ class App(ctk.CTk):
             self.top_status.configure(text="목록을 가져오지 못했어요")
 
         if self.manifest is not None and self.hub.hub_update_available(self.manifest):
-            self.hub_update_frame.pack(before=self.cards_frame, pady=(0, 8))
+            # cards_frame 은 스크롤 틀이라 before= 로 가리킬 수 없다 (v1.2.0 까지 여기서 오류가 났다)
+            self.hub_update_frame.pack(after=self.refresh_btn, pady=(0, 8))
         else:
             self.hub_update_frame.pack_forget()
 

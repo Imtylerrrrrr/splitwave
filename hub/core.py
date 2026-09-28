@@ -19,7 +19,7 @@ from typing import Callable, Sequence
 REPO_URL = "https://github.com/Imtylerrrrrr/splitwave"
 # 허브 코드가 마지막으로 바뀐 릴리스. 허브(hub/*.py)를 고칠 때만 올린다.
 # 허브는 릴리스마다 다시 빌드되어 바이트가 달라지므로, 업데이트 여부는 해시가 아니라 이 값으로 판단한다.
-HUB_VERSION = "1.2.0"
+HUB_VERSION = "1.2.1"
 NOT_INSTALLED = "not_installed"
 UP_TO_DATE = "up_to_date"
 UPDATE_AVAILABLE = "update_available"
@@ -142,9 +142,11 @@ def parse_manifest(data: bytes | str | dict) -> Manifest:
     if schema != 1 or isinstance(schema, bool):
         raise HubError(MSG_FORMAT)
     version = _match(_VERSION, data, "version")
+    # 허브 정보는 self_update 에서 읽는다. 예전 키 hub 는 쓰지 않는다:
+    # v1.1.0, v1.2.0 허브는 hub 항목이 자기와 다르면 화면이 비어서, 새 매니페스트에 넣을 수 없다.
     hub = None
-    if data.get("hub") is not None:
-        h = data["hub"]
+    if data.get("self_update") is not None:
+        h = data["self_update"]
         hub = HubFile(_match(_FILE, h, "file"), _get(h, "size", "posint"), _match(_HEX, h, "sha256"),
                       _match(_VERSION, h, "version") if h.get("version") is not None else None)
     apps, app_ids = [], set()

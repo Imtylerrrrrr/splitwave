@@ -140,7 +140,8 @@ def build_manifest(version: str, apps_def: dict, directory: str) -> dict:
             "parts": parts,
         })
 
-    return {"schema": 1, "version": version, "hub": hub_entry, "apps": apps}
+    # 키 이름은 self_update. "hub" 로 내보내면 이미 배포된 v1.1.0, v1.2.0 허브의 화면이 빈다.
+    return {"schema": 1, "version": version, "self_update": hub_entry, "apps": apps}
 
 
 def write_sums(directory: str) -> None:

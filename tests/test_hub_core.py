@@ -72,7 +72,7 @@ class Server:
         m = {"schema": 1, "version": version,
              "apps": [{"id": "demo", "name": "Demo", "description": "시험 앱", "exe": exe, "parts": parts}]}
         if hub:
-            m["hub"] = hub
+            m["self_update"] = hub
         (self.dir / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
         self.requests.clear()
         return m
@@ -114,7 +114,7 @@ def install_two(hub, srv):
 
 def good_manifest():
     return {"schema": 1, "version": "1.1.0",
-            "hub": {"file": "splitwave-hub.exe", "size": 10, "sha256": H},
+            "self_update": {"file": "splitwave-hub.exe", "size": 10, "sha256": H},
             "apps": [{"id": "splitwave", "name": "Splitwave", "description": "d", "exe": "sub/splitwave.exe",
                       "parts": [{"id": "app", "file": "splitwave.zip", "size": 5, "unpacked": 9,
                                  "sha256": H, "content": "a" * 64}]}]}
@@ -179,8 +179,8 @@ BAD_CASES = {
     "exe inner dotdot": _set(APP + ("exe",), "a/../x.exe"),
     "exe drive": _set(APP + ("exe",), "C:/x.exe"),
     "no parts": _set(APP + ("parts",), []),
-    "hub sha bad": _set(("hub", "sha256"), "x"),
-    "hub size zero": _set(("hub", "size"), 0),
+    "hub sha bad": _set(("self_update", "sha256"), "x"),
+    "hub size zero": _set(("self_update", "size"), 0),
     "apps not list": _set(("apps",), {}),
     "dup app id": lambda m: m["apps"].append(json.loads(json.dumps(m["apps"][0]))),
     "dup part id": lambda m: m["apps"][0]["parts"].append(dict(m["apps"][0]["parts"][0])),
@@ -518,7 +518,7 @@ def test_hub_update_available(hub, tmp_path, monkeypatch):
     exe = tmp_path / "splitwave-hub.exe"
     exe.write_bytes(b"hub-v1")
     m = parse_manifest({"schema": 1, "version": "1.0.0",
-                        "hub": {"file": "splitwave-hub.exe", "size": 6, "sha256": sha(b"hub-v1")}, "apps": []})
+                        "self_update": {"file": "splitwave-hub.exe", "size": 6, "sha256": sha(b"hub-v1")}, "apps": []})
     monkeypatch.delattr(sys, "frozen", raising=False)
     monkeypatch.setattr(sys, "executable", str(exe))
     assert hub.hub_update_available(m) is False
@@ -538,7 +538,7 @@ def test_hub_update_is_decided_by_version_when_manifest_has_one(hub, tmp_path, m
 
     def manifest(version):
         return parse_manifest({"schema": 1, "version": "1.3.0", "apps": [],
-                               "hub": {"file": "splitwave-hub.exe", "size": 6,
+                               "self_update": {"file": "splitwave-hub.exe", "size": 6,
                                        "sha256": sha(b"hub-v1"), "version": version}})
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -552,11 +552,11 @@ def test_hub_update_is_decided_by_version_when_manifest_has_one(hub, tmp_path, m
 def test_manifest_hub_version_is_optional_but_validated():
     base = {"schema": 1, "version": "1.0.0", "apps": []}
     hubf = {"file": "splitwave-hub.exe", "size": 6, "sha256": "a" * 64}
-    assert parse_manifest({**base, "hub": hubf}).hub.version is None
+    assert parse_manifest({**base, "self_update": hubf}).hub.version is None
     with pytest.raises(HubError):
-        parse_manifest({**base, "hub": {**hubf, "version": "not a version"}})
+        parse_manifest({**base, "self_update": {**hubf, "version": "not a version"}})
     with pytest.raises(HubError):
-        parse_manifest({**base, "hub": {**hubf, "version": 12}})
+        parse_manifest({**base, "self_update": {**hubf, "version": 12}})
 
 
 # 18. self_update
@@ -618,3 +618,12 @@ def test_log_appends_line(hub):
     hub.log("world")
     lines = (hub.root / "hub.log").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2 and lines[0].endswith(" hello")
+
+
+def test_manifest_reads_self_update_and_ignores_the_old_hub_key():
+    """v1.1.0, v1.2.0 허브는 매니페스트의 hub 항목이 자기와 다르면 화면이 비었다.
+    그래서 새 매니페스트는 hub 를 쓰지 않고, 새 허브는 self_update 만 읽는다."""
+    base = {"schema": 1, "version": "1.2.1", "apps": []}
+    entry = {"file": "splitwave-hub.exe", "size": 10, "sha256": H, "version": "1.2.1"}
+    assert parse_manifest({**base, "self_update": entry}).hub.version == "1.2.1"
+    assert parse_manifest({**base, "hub": entry}).hub is None

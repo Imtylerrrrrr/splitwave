@@ -65,7 +65,7 @@ def test_build_manifest_fields_and_values(tmp_path):
 
     assert manifest["schema"] == 1
     assert manifest["version"] == "1.1.0"
-    assert manifest["hub"] == {
+    assert manifest["self_update"] == {
         "file": "splitwave-hub.exe",
         "size": len(hub_bytes),
         "sha256": hashlib.sha256(hub_bytes).hexdigest(),
@@ -191,3 +191,12 @@ def test_hub_version_missing_constant_fails_with_fix(tmp_path):
     with pytest.raises(SystemExit) as e:
         make_manifest.hub_version(str(src))
     assert "Fix:" in str(e.value)
+
+
+def test_manifest_never_has_the_old_hub_key(tmp_path):
+    """이미 배포된 v1.1.0, v1.2.0 허브는 hub 항목이 자기와 다르면 화면이 빈다.
+    허브 정보는 self_update 에만 넣는다."""
+    (tmp_path / "splitwave-hub.exe").write_bytes(b"hub")
+    manifest = make_manifest.build_manifest("1.2.1", {"hub": "splitwave-hub.exe", "apps": []}, str(tmp_path))
+    assert "hub" not in manifest
+    assert manifest["self_update"]["version"] == make_manifest.hub_version()
