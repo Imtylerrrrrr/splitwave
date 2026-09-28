@@ -1,0 +1,11 @@
+{
+  "hub": "splitwave-hub.exe",
+  "apps": [
+    {"id": "splitwave", "name": "Splitwave", "description": "유튜브 음원 다운로드와 키 조정",
+     "exe": "splitwave.exe", "parts": [{"id": "app", "file": "splitwave.exe"}]},
+    {"id": "splitwave-full", "name": "Splitwave + 스템 분리", "description": "다운로드, 키 조정, 악기별 분리",
+     "exe": "splitwave-full/splitwave-full.exe", "parts": [{"id": "all", "file": "splitwave-full.zip"}]},
+    {"id": "tempofollow", "name": "Tempo Follow (실험)", "description": "드럼 템포를 따라가며 곡을 재생",
+     "exe": "tempofollow/tempofollow.exe", "parts": [{"id": "all", "file": "tempofollow.zip"}]}
+  ]
+}
