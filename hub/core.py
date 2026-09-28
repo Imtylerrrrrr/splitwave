@@ -17,6 +17,9 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Sequence
 
 REPO_URL = "https://github.com/Imtylerrrrrr/splitwave"
+# 허브 코드가 마지막으로 바뀐 릴리스. 허브(hub/*.py)를 고칠 때만 올린다.
+# 허브는 릴리스마다 다시 빌드되어 바이트가 달라지므로, 업데이트 여부는 해시가 아니라 이 값으로 판단한다.
+HUB_VERSION = "1.2.0"
 NOT_INSTALLED = "not_installed"
 UP_TO_DATE = "up_to_date"
 UPDATE_AVAILABLE = "update_available"
@@ -64,6 +67,7 @@ class HubFile:
     file: str
     size: int
     sha256: str
+    version: str | None = None      # v1.1.0 매니페스트에는 없다
 
 
 @dataclass(frozen=True)
@@ -141,7 +145,8 @@ def parse_manifest(data: bytes | str | dict) -> Manifest:
     hub = None
     if data.get("hub") is not None:
         h = data["hub"]
-        hub = HubFile(_match(_FILE, h, "file"), _get(h, "size", "posint"), _match(_HEX, h, "sha256"))
+        hub = HubFile(_match(_FILE, h, "file"), _get(h, "size", "posint"), _match(_HEX, h, "sha256"),
+                      _match(_VERSION, h, "version") if h.get("version") is not None else None)
     apps, app_ids = [], set()
     for a in _get(data, "apps", "list"):
         app_id = _match(_ID, a, "id")
@@ -492,7 +497,9 @@ class Hub:
     def hub_update_available(self, manifest: Manifest) -> bool:
         if not getattr(sys, "frozen", False) or manifest.hub is None:
             return False
-        try:
+        if manifest.hub.version is not None:
+            return manifest.hub.version != HUB_VERSION
+        try:      # 옛 매니페스트(v1.1.0)에는 버전이 없다: 해시로 비교
             return _sha256_file(Path(sys.executable)) != manifest.hub.sha256
         except OSError:
             return False

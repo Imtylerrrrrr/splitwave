@@ -528,6 +528,37 @@ def test_hub_update_available(hub, tmp_path, monkeypatch):
     assert hub.hub_update_available(m) is True
 
 
+def test_hub_update_is_decided_by_version_when_manifest_has_one(hub, tmp_path, monkeypatch):
+    """허브는 릴리스마다 다시 빌드되어 바이트가 달라진다. 매니페스트에 hub.version 이 있으면
+    해시가 달라도 버전이 같을 때는 업데이트가 아니다."""
+    import hub.core as core
+    exe = tmp_path / "splitwave-hub.exe"
+    exe.write_bytes(b"same code, rebuilt, different bytes")
+    monkeypatch.setattr(sys, "executable", str(exe))
+
+    def manifest(version):
+        return parse_manifest({"schema": 1, "version": "1.3.0", "apps": [],
+                               "hub": {"file": "splitwave-hub.exe", "size": 6,
+                                       "sha256": sha(b"hub-v1"), "version": version}})
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert manifest(core.HUB_VERSION).hub.version == core.HUB_VERSION
+    assert hub.hub_update_available(manifest(core.HUB_VERSION)) is False
+    assert hub.hub_update_available(manifest("9.9.9")) is True
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert hub.hub_update_available(manifest("9.9.9")) is False      # 소스로 실행 중이면 항상 없음
+
+
+def test_manifest_hub_version_is_optional_but_validated():
+    base = {"schema": 1, "version": "1.0.0", "apps": []}
+    hubf = {"file": "splitwave-hub.exe", "size": 6, "sha256": "a" * 64}
+    assert parse_manifest({**base, "hub": hubf}).hub.version is None
+    with pytest.raises(HubError):
+        parse_manifest({**base, "hub": {**hubf, "version": "not a version"}})
+    with pytest.raises(HubError):
+        parse_manifest({**base, "hub": {**hubf, "version": 12}})
+
+
 # 18. self_update
 
 def test_self_update(hub, srv, tmp_path, monkeypatch):

@@ -80,6 +80,23 @@ def _require_file(path: str) -> None:
         raise SystemExit(f"make_manifest: missing {path}. Fix: download the CI artifact into the directory.")
 
 
+_HUB_CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hub", "core.py")
+_HUB_VERSION_RE = re.compile(r'^HUB_VERSION = "([^"]+)"', re.MULTILINE)
+
+
+def hub_version(path: str = _HUB_CORE) -> str:
+    """hub/core.py 의 HUB_VERSION. 허브는 이 값이 자기 것과 다를 때만 자체 업데이트를 권한다."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            found = _HUB_VERSION_RE.search(f.read())
+    except OSError:
+        found = None
+    if not found or not _VERSION_RE.match(found.group(1)):
+        raise SystemExit(f"make_manifest: no valid HUB_VERSION in {path}. "
+                         'Fix: keep a line like HUB_VERSION = "1.2.0" in hub/core.py.')
+    return found.group(1)
+
+
 def build_manifest(version: str, apps_def: dict, directory: str) -> dict:
     if not _VERSION_RE.match(version):
         raise SystemExit(f"make_manifest: invalid version {version!r}. Fix: use digits and dots like 1.1.0.")
@@ -87,7 +104,8 @@ def build_manifest(version: str, apps_def: dict, directory: str) -> dict:
     hub_file = apps_def["hub"]
     hub_path = os.path.join(directory, hub_file)
     _require_file(hub_path)
-    hub_entry = {"file": hub_file, "size": os.path.getsize(hub_path), "sha256": _sha256_file(hub_path)}
+    hub_entry = {"file": hub_file, "size": os.path.getsize(hub_path), "sha256": _sha256_file(hub_path),
+                 "version": hub_version()}
 
     apps = []
     for app in apps_def["apps"]:

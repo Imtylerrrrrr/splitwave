@@ -69,6 +69,7 @@ def test_build_manifest_fields_and_values(tmp_path):
         "file": "splitwave-hub.exe",
         "size": len(hub_bytes),
         "sha256": hashlib.sha256(hub_bytes).hexdigest(),
+        "version": make_manifest.hub_version(),
     }
     assert len(manifest["apps"]) == 1
     app = manifest["apps"][0]
@@ -175,3 +176,18 @@ def test_outputs_use_lf_line_endings_on_every_platform(tmp_path, monkeypatch):
     make_manifest.write_sums(str(tmp_path))
     data = (tmp_path / "SHA256SUMS.txt").read_bytes()
     assert b"\r" not in data and data.count(b"\n") == 2
+
+
+def test_hub_version_is_read_from_hub_core():
+    """허브 업데이트 판정에 쓰는 버전은 hub/core.py 의 HUB_VERSION 한 곳에서만 온다."""
+    import hub.core
+    assert make_manifest.hub_version() == hub.core.HUB_VERSION
+    assert make_manifest._VERSION_RE.match(make_manifest.hub_version())
+
+
+def test_hub_version_missing_constant_fails_with_fix(tmp_path):
+    src = tmp_path / "core.py"
+    src.write_text("X = 1\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        make_manifest.hub_version(str(src))
+    assert "Fix:" in str(e.value)
