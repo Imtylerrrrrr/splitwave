@@ -2,6 +2,7 @@ import pytest
 
 pytest.importorskip("demucs.api")
 
+import library  # noqa: E402
 import stems_page  # noqa: E402
 from separator import DEFAULT_STEMS  # noqa: E402
 
@@ -79,7 +80,8 @@ def test_folder_label_follows_app(monkeypatch, tmp_path):
         monkeypatch.setattr("main.filedialog.askdirectory", lambda **kw: str(tmp_path))
         monkeypatch.setattr("main.save_settings", lambda s: None)
         app.choose_folder()
-        assert page.folder_label.cget("text") == str(tmp_path)
+        # 스템 탭 폴더 글자는 저장 폴더가 아니라 보관함 경로를 보여준다 (library 설계 변경)
+        assert page.folder_label.cget("text") == library.library_dir(str(tmp_path))
     finally:
         app.destroy()
 

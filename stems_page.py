@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import yt_dlp
 
+import library
 from common import (
     KEY_VALUES, KEY_HELP, parse_key, is_youtube_url,
     translate_error, collect_filepaths, open_path,
@@ -54,6 +55,9 @@ FORMAT_TO_EXT = {"WAV": "wav", "MP3 320kbps": "mp3"}
 AUDIO_FILETYPES = [("오디오 파일", "*.mp3 *.m4a *.wav *.opus *.webm *.ogg *.flac"),
                    ("모든 파일", "*.*")]
 
+LIBRARY_GUIDE_ITEM = "(보관함에서 고르기)"
+LIBRARY_EMPTY_ITEM = "(받은 곡이 없어요)"
+
 
 class StemsPage(ctk.CTkFrame):
     """스템 분리 탭. 입력(파일 or 링크) → separator.separate → 폴더에 저장."""
@@ -64,8 +68,10 @@ class StemsPage(ctk.CTkFrame):
         self.app = app
         self.file_path: str | None = None
         self.out_dir: str | None = None
+        self.song_options: dict[str, str] = {}
         self._build()
         app.folder_listeners.append(lambda d: self.folder_label.configure(text=d))
+        app.library_listeners.append(self.refresh_library_menu)
 
     # ── UI ──
     def _build(self):
@@ -87,6 +93,18 @@ class StemsPage(ctk.CTkFrame):
         self.file_label = ctk.CTkLabel(file_row, text="(선택 안 함)", anchor="w",
                                        font=ctk.CTkFont(size=11), text_color="gray70")
         self.file_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+        lib_row = ctk.CTkFrame(self, fg_color="transparent")
+        lib_row.pack(fill="x", padx=20, pady=(6, 0))
+        ctk.CTkLabel(lib_row, text="보관함에서 선택:").pack(side="left")
+        self.library_menu = ctk.CTkOptionMenu(
+            lib_row, values=[LIBRARY_GUIDE_ITEM], width=220, dynamic_resizing=False,
+            command=self.on_library_select)
+        self.library_menu.pack(side="left", padx=(8, 0))
+        ctk.CTkButton(lib_row, text="새로고침", width=90,
+                      fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
+                      command=self.refresh_library_menu).pack(side="left", padx=(6, 0))
+        self.refresh_library_menu()
 
         ctk.CTkLabel(self, text="저장할 스템:", anchor="w").pack(fill="x", **pad)
         grid = ctk.CTkFrame(self, fg_color="transparent")
@@ -124,7 +142,7 @@ class StemsPage(ctk.CTkFrame):
         ctk.CTkButton(folder_row, text="저장 폴더 선택", width=130,
                       fg_color="gray30", hover_color="gray25", text_color="#F9FAFB",
                       command=self.app.choose_folder).pack(side="left")
-        self.folder_label = ctk.CTkLabel(folder_row, text=self.app.save_dir, anchor="w",
+        self.folder_label = ctk.CTkLabel(folder_row, text=self.app.library_dir, anchor="w",
                                          font=ctk.CTkFont(size=11), text_color="gray70")
         self.folder_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
@@ -170,9 +188,29 @@ class StemsPage(ctk.CTkFrame):
     def on_clear_file(self):
         self.file_path = None
         self.file_label.configure(text="(선택 안 함)")
+        self.library_menu.set(LIBRARY_GUIDE_ITEM if self.song_options else LIBRARY_EMPTY_ITEM)
+
+    # ── 보관함에서 선택 ──
+    def refresh_library_menu(self):
+        self.song_options = library.menu_labels(library.list_songs(self.app.library_dir))
+        if self.song_options:
+            values = [LIBRARY_GUIDE_ITEM] + list(self.song_options.keys())
+        else:
+            values = [LIBRARY_EMPTY_ITEM]
+        self.library_menu.configure(values=values)
+        self.library_menu.set(values[0])
+
+    def on_library_select(self, choice: str):
+        if choice in (LIBRARY_GUIDE_ITEM, LIBRARY_EMPTY_ITEM):
+            return
+        path = self.song_options.get(choice)
+        if path is None:
+            return
+        self.file_path = path
+        self.file_label.configure(text=os.path.basename(path))
 
     def open_result(self):
-        open_path(self.out_dir or self.app.save_dir)
+        open_path(self.out_dir or self.app.library_dir)
 
     # ── 시작 ──
     def on_start_click(self):
@@ -213,11 +251,16 @@ class StemsPage(ctk.CTkFrame):
     def _worker(self, src, stems, fmt, semitones):
         stage = "download"
         try:
+            lib = self.app.library_dir
             kind, value = src
-            input_path = self._download(value) if kind == "url" else value
+            if kind == "url":
+                input_path = self._download(value, lib)
+                self.app.after(0, self.app.notify_library_changed)
+            else:
+                input_path = value
             stage = "separate"
             from separator import separate, translate_stem_error  # 지연 import (torch 로딩)
-            out_dir = os.path.join(self.app.save_dir, f"{Path(input_path).stem}_stems")
+            out_dir = os.path.join(lib, f"{Path(input_path).stem}_stems")
             saved = separate(
                 input_path, stems, out_dir, fmt, self.app.ffmpeg_path, semitones,
                 on_progress=lambda frac, text: self.app.after(
@@ -232,11 +275,11 @@ class StemsPage(ctk.CTkFrame):
                 msg = translate_error(e)
             self.app.after(0, lambda: self._on_error(msg))
 
-    def _download(self, url: str) -> str:
-        """링크를 m4a 로 받아 경로를 돌려준다 (다운로드 탭과 같은 옵션, 재생목록은 첫 곡만)."""
+    def _download(self, url: str, lib: str) -> str:
+        """링크를 보관함에 m4a 로 받아 경로를 돌려준다 (다운로드 탭과 같은 옵션, 재생목록은 첫 곡만)."""
         ydl_opts = {
             "format": "bestaudio[ext=m4a]/bestaudio",
-            "outtmpl": os.path.join(self.app.save_dir, "%(title)s.%(ext)s"),
+            "outtmpl": os.path.join(lib, "%(title)s.%(ext)s"),
             "windowsfilenames": True,
             "noplaylist": True,
             "progress_hooks": [self._progress_hook],
@@ -252,6 +295,8 @@ class StemsPage(ctk.CTkFrame):
         paths = collect_filepaths(info)
         if not paths:
             raise RuntimeError("다운로드한 파일을 찾지 못했습니다.")
+        for vid, entry_paths in library.downloads_from_info(info):
+            library.record_download(lib, vid, entry_paths)
         return paths[0]
 
     def _progress_hook(self, d: dict):
@@ -270,6 +315,7 @@ class StemsPage(ctk.CTkFrame):
         self.open_btn.configure(state="normal")
         self.progress.set(1.0)
         self.set_status(f"완료: {len(saved)}개 스템 저장")
+        self.app.notify_library_changed()
         names = "\n".join(os.path.basename(p) for p in saved)
         messagebox.showinfo("완료", f"스템 분리가 끝났습니다.\n\n{names}\n\n폴더:\n{out_dir}")
 

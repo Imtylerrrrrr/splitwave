@@ -7,9 +7,7 @@
 
 import os
 import sys
-import json
 import threading
-from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -20,38 +18,8 @@ from common import (
     is_youtube_url, is_playlist_url, translate_error,
     collect_filepaths, open_path,
 )
-
-
-# ──────────────────────────────────────────────
-# 설정 저장 (마지막 사용 폴더 기억)
-# ──────────────────────────────────────────────
-
-def config_path() -> Path:
-    """설정 파일 위치: Windows는 %APPDATA%, 그 외엔 홈 폴더."""
-    base = os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "yt_audio_downloader_config.json"
-
-
-def load_settings() -> dict:
-    try:
-        with open(config_path(), "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_settings(settings: dict) -> None:
-    try:
-        with open(config_path(), "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass  # 설정 저장 실패는 치명적이지 않으므로 무시
-
-
-def default_download_dir() -> str:
-    """기본 저장 폴더 = 사용자 다운로드 폴더."""
-    d = Path.home() / "Downloads"
-    return str(d if d.is_dir() else Path.home())
+import library
+from library import config_path, load_settings, save_settings, default_download_dir
 
 
 # ──────────────────────────────────────────────
@@ -120,7 +88,8 @@ class App(ctk.CTk):
             self.save_dir = default_download_dir()
         self.ffmpeg_path = find_ffmpeg()
         self.busy = False   # 다운로드/스템 분리 중 하나라도 돌고 있으면 True
-        self.folder_listeners = []   # 저장 폴더가 바뀌면 호출할 콜백들 (스템 탭이 등록)
+        self.folder_listeners = []   # 보관함 경로가 바뀌면 호출할 콜백들 (스템 탭이 등록)
+        self.library_listeners = []  # 보관함 내용이 바뀌면(다운로드/분리 완료 등) 호출할 콜백들
 
         self._build_ui()
 
@@ -208,7 +177,7 @@ class App(ctk.CTk):
             command=self.choose_folder,
         ).pack(side="left")
         self.folder_label = ctk.CTkLabel(
-            folder_row, text=self.save_dir, anchor="w",
+            folder_row, text=self.library_dir, anchor="w",
             font=ctk.CTkFont(size=11), text_color="gray70",
         )
         self.folder_label.pack(side="left", padx=(10, 0), fill="x", expand=True)
@@ -236,6 +205,18 @@ class App(ctk.CTk):
         self.open_btn.pack(fill="x", padx=20, pady=(10, 16))
 
     # ── 유틸 ──
+    @property
+    def library_dir(self) -> str:
+        try:
+            return library.ensure_library(self.save_dir)
+        except OSError:
+            # 폴더를 못 만들어도 앱은 떠야 저장 폴더를 바꿀 수 있다. 받을 때 오류로 알린다.
+            return library.library_dir(self.save_dir)
+
+    def notify_library_changed(self):
+        for cb in self.library_listeners:
+            cb()
+
     def set_status(self, text: str):
         self.status_label.configure(text=text)
 
@@ -243,15 +224,16 @@ class App(ctk.CTk):
         chosen = filedialog.askdirectory(initialdir=self.save_dir)
         if chosen:
             self.save_dir = chosen
-            self.folder_label.configure(text=chosen)
+            self.folder_label.configure(text=self.library_dir)
             # 마지막 사용 폴더 기억
             self.settings["last_dir"] = chosen
             save_settings(self.settings)
             for cb in self.folder_listeners:
-                cb(chosen)
+                cb(self.library_dir)
+            self.notify_library_changed()
 
     def open_folder(self):
-        open_path(self.save_dir)
+        open_path(self.library_dir)
 
     # ── 다운로드 시작 ──
     def on_download_click(self):
@@ -297,6 +279,18 @@ class App(ctk.CTk):
                 "아니오(N): 첫 영상만 받기")
             noplaylist = not whole
 
+        lib = self.library_dir
+        if noplaylist:
+            vid = library.video_id(url)
+            if vid is not None:
+                existing = library.find_downloaded(lib, vid)
+                if existing:
+                    names = "\n".join(os.path.basename(p) for p in existing)
+                    if not messagebox.askyesno(
+                        "이미 받은 곡",
+                        f"이 링크는 이미 보관함에 있어요.\n\n{names}\n\n그래도 다시 받을까요?"):
+                        return
+
         # 별도 스레드에서 실행 → GUI 멈춤 방지
         self.busy = True
         self.download_btn.configure(state="disabled", text="다운로드 중...")
@@ -305,20 +299,20 @@ class App(ctk.CTk):
 
         threading.Thread(
             target=self._download_worker,
-            args=(url, fmt_label, noplaylist, semitones),
+            args=(url, fmt_label, noplaylist, semitones, lib),
             daemon=True,
         ).start()
 
     # ── 다운로드 워커 (별도 스레드) ──
     def _download_worker(self, url: str, fmt_label: str, noplaylist: bool,
-                         semitones: int):
+                         semitones: int, lib: str):
         try:
             opts = build_format_opts(fmt_label)
             ydl_opts = {
                 # 파일명: 영상 제목 기반.
                 # windowsfilenames=True 가 Windows 금지문자(\ / : * ? " < > |)를
                 # 자동으로 안전한 문자로 치환/제거해 준다.
-                "outtmpl": os.path.join(self.save_dir, "%(title)s.%(ext)s"),
+                "outtmpl": os.path.join(lib, "%(title)s.%(ext)s"),
                 "windowsfilenames": True,
                 "noplaylist": noplaylist,
                 "progress_hooks": [self._progress_hook],
@@ -336,18 +330,29 @@ class App(ctk.CTk):
                 # download=True 로 받으면서 최종 파일 경로도 info에서 수집
                 info = ydl.extract_info(url, download=True)
 
+            # 색인에 남길 (영상 id, 파일들) — 키 조정 전 원본 경로 기준
+            downloads = library.downloads_from_info(info)
+
             # 키 조정이 필요하면 받은 파일들에 FFmpeg 피치 시프트 적용
             if semitones != 0:
                 paths = collect_filepaths(info)
+                shifted = {}
                 for i, path in enumerate(paths, 1):
                     self.after(0, lambda i=i, n=len(paths): self.set_status(
                         f"키 조정 중... ({i}/{n})"))
-                    shift_pitch(path, semitones, self.ffmpeg_path)
+                    shifted[path] = shift_pitch(path, semitones, self.ffmpeg_path)
                     # 원본(키 조정 전) 파일은 삭제하고 조정본만 남긴다
                     try:
                         os.remove(path)
                     except OSError:
                         pass
+                downloads = [
+                    (vid, [shifted.get(p, p) for p in paths_])
+                    for vid, paths_ in downloads
+                ]
+
+            for vid, paths_ in downloads:
+                library.record_download(lib, vid, paths_)
 
             # 성공 → 메인 스레드에서 UI 갱신
             self.after(0, self._on_done)
@@ -432,7 +437,8 @@ class App(ctk.CTk):
         self.busy = False
         self.download_btn.configure(state="normal", text="다운로드")
         self.progress.set(1.0)
-        self.set_status("완료. 폴더 열기 버튼으로 확인하세요.")
+        self.set_status("완료. 보관함에 저장했어요.")
+        self.notify_library_changed()
         messagebox.showinfo("완료", "다운로드가 끝났습니다.")
 
     def _on_error(self, korean_msg: str):

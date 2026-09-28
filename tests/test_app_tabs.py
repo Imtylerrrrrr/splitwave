@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+import library
 import stems_page
 
 
@@ -51,7 +52,8 @@ def test_folder_listeners_called(tmp_path, monkeypatch):
         monkeypatch.setattr("main.filedialog.askdirectory", lambda **kw: str(tmp_path))
         monkeypatch.setattr("main.save_settings", lambda s: None)
         app.choose_folder()
-        assert got == [str(tmp_path)]
+        # folder_listeners 는 이제 보관함 경로를 받는다 (library 설계 변경)
+        assert got == [library.library_dir(str(tmp_path))]
         assert app.save_dir == str(tmp_path)
     finally:
         app.destroy()
