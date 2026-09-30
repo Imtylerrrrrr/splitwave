@@ -56,6 +56,13 @@ def prune(hf_home: str) -> None:
         remove_dir(os.path.join(model_dir, "blobs"))
     remove_dir(os.path.join(hub, "blobs"))  # 공유 blob 저장소
     remove_dir(os.path.join(hf_home, "xet"))
+    # hf_home 바로 아래의 파일(.agent_harnesses.json 등)은 huggingface_hub 의 부가 캐시다.
+    # 빌드마다 내용이 달라져 모델 묶음의 content 해시를 바꾸므로 hub/ 만 남긴다.
+    for name in sorted(os.listdir(hf_home)):
+        path = os.path.join(hf_home, name)
+        if os.path.isfile(path) or os.path.islink(path):
+            os.remove(path)
+            print(f"prune: removed loose file {name}")
 
     weights = real_weight_files(hf_home)
     total = sum(os.path.getsize(os.path.join(r, f))

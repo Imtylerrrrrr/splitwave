@@ -72,3 +72,18 @@ def test_prune_refuses_when_no_real_weight_remains(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit):
         prune_hf_cache.prune(str(hf))
+
+
+def test_prune_drops_loose_files_in_hf_home_root(tmp_path, monkeypatch):
+    """huggingface_hub 가 hf_home 바로 아래에 두는 캐시 파일(.agent_harnesses.json 등)은
+    빌드마다 내용이 달라져 모델 묶음의 content 해시를 바꾼다 (v1.3.0 에서 51 MB 재다운로드).
+    hub/ 폴더만 남긴다."""
+    monkeypatch.setattr(prune_hf_cache, "MIN_WEIGHT_BYTES", 10)
+    hf, snap = make_cache(tmp_path, weight_bytes=100)
+    (hf / ".agent_harnesses.json").write_text("{}")
+    (hf / "token").write_text("x")
+
+    prune_hf_cache.prune(str(hf))
+
+    assert sorted(os.listdir(hf)) == ["hub"]
+    assert (snap / "5c90dfd2.safetensors").is_file()
