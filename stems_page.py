@@ -75,7 +75,7 @@ class StemsPage(ctk.CTkFrame):
 
     # ── UI ──
     def _build(self):
-        from separator import STEM_LABELS, STEM_ORDER, DEFAULT_STEMS
+        from separator import DEFAULT_STEMS
         pad = {"padx": 20, "pady": (10, 0)}
 
         ctk.CTkLabel(self, text="유튜브 링크 또는 음원 파일 (파일이 우선):", anchor="w").pack(fill="x", **pad)
@@ -106,23 +106,20 @@ class StemsPage(ctk.CTkFrame):
                       command=self.refresh_library_menu).pack(side="left", padx=(6, 0))
         self.refresh_library_menu()
 
-        ctk.CTkLabel(self, text="저장할 스템:", anchor="w").pack(fill="x", **pad)
-        grid = ctk.CTkFrame(self, fg_color="transparent")
-        grid.pack(fill="x", padx=20, pady=(4, 0))
-        self.stem_vars: dict[str, ctk.BooleanVar] = {}
-        for i, name in enumerate(STEM_ORDER):
-            var = ctk.BooleanVar(value=name in DEFAULT_STEMS)
-            self.stem_vars[name] = var
-            ctk.CTkCheckBox(
-                grid, text=STEM_LABELS[name], variable=var,
-                checkbox_width=18, checkbox_height=18, corner_radius=3, border_width=1,
-                border_color="#6B7280", fg_color="#2B2B2B", hover_color="#374151",
-                checkmark_color="#F9FAFB", text_color="#F9FAFB", font=ctk.CTkFont(size=13),
-            ).grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 24), pady=3)
+        # 두 체크박스 그룹을 나란히 (아래로 쌓으면 창 높이를 넘는다)
+        groups = ctk.CTkFrame(self, fg_color="transparent")
+        groups.pack(fill="x", **pad)
+        self.stem_grid, self.stem_vars = self._stem_group(groups, "저장할 스템:", DEFAULT_STEMS)
+        self.minus_grid, self.minus_vars = self._stem_group(groups, "빼고 듣기:", [], padx=(32, 0))
+
         ctk.CTkLabel(
             self, text="기타·건반 분리는 보컬·드럼보다 품질이 낮을 수 있어요.",
             justify="left", anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
         ).pack(fill="x", padx=20, pady=(4, 0))
+        ctk.CTkLabel(
+            self, text="빼고 듣기는 체크한 악기만 뺀 음원을 따로 저장해요.",
+            justify="left", anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
+        ).pack(fill="x", padx=20, pady=(0, 0))
 
         opt_row = ctk.CTkFrame(self, fg_color="transparent")
         opt_row.pack(fill="x", padx=20, pady=(10, 0))
@@ -162,6 +159,27 @@ class StemsPage(ctk.CTkFrame):
                                       state="disabled")
         self.open_btn.pack(fill="x", padx=20, pady=(10, 16))
 
+    def _stem_group(self, parent, title: str, checked: list[str], padx=0):
+        """제목 + STEM_ORDER 순서의 체크박스 2열 grid 를 parent 왼쪽부터 차례로 놓는다.
+        (grid 프레임, {demucs 이름: 변수}) 를 돌려준다."""
+        from separator import STEM_LABELS, STEM_ORDER
+        col = ctk.CTkFrame(parent, fg_color="transparent")
+        col.pack(side="left", anchor="n", padx=padx)
+        ctk.CTkLabel(col, text=title, anchor="w").pack(fill="x")
+        grid = ctk.CTkFrame(col, fg_color="transparent")
+        grid.pack(fill="x", pady=(4, 0))
+        variables: dict[str, ctk.BooleanVar] = {}
+        for i, name in enumerate(STEM_ORDER):
+            var = ctk.BooleanVar(value=name in checked)
+            variables[name] = var
+            ctk.CTkCheckBox(
+                grid, text=STEM_LABELS[name], variable=var,
+                checkbox_width=18, checkbox_height=18, corner_radius=3, border_width=1,
+                border_color="#6B7280", fg_color="#2B2B2B", hover_color="#374151",
+                checkmark_color="#F9FAFB", text_color="#F9FAFB", font=ctk.CTkFont(size=13),
+            ).grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 8), pady=3)
+        return grid, variables
+
     # ── 유틸 ──
     def set_status(self, text: str):
         self.status_label.configure(text=text)
@@ -169,6 +187,10 @@ class StemsPage(ctk.CTkFrame):
     def selected_stems(self) -> list[str]:
         from separator import STEM_ORDER
         return [n for n in STEM_ORDER if self.stem_vars[n].get()]
+
+    def selected_minus(self) -> list[str]:
+        from separator import STEM_ORDER
+        return [n for n in STEM_ORDER if self.minus_vars[n].get()]
 
     def resolve_input(self):
         """("file", 경로) / ("url", 링크) / None. 파일이 링크보다 우선."""
@@ -226,8 +248,9 @@ class StemsPage(ctk.CTkFrame):
                                    "youtube.com 또는 youtu.be 로 시작하는 주소를 넣어 주세요.")
             return
         stems = self.selected_stems()
-        if not stems:
-            messagebox.showwarning("안내", "저장할 스템을 하나 이상 선택해 주세요.")
+        minus = self.selected_minus()
+        if not stems and not minus:
+            messagebox.showwarning("안내", "저장할 스템이나 뺄 악기를 하나 이상 선택해 주세요.")
             return
         if not self.app.ffmpeg_path:
             messagebox.showerror("FFmpeg 없음",
@@ -244,11 +267,11 @@ class StemsPage(ctk.CTkFrame):
         self.progress.set(0)
         self.set_status("준비 중...")
         threading.Thread(
-            target=self._worker, args=(src, stems, fmt, semitones), daemon=True,
+            target=self._worker, args=(src, stems, minus, fmt, semitones), daemon=True,
         ).start()
 
     # ── 워커 (별도 스레드) ──
-    def _worker(self, src, stems, fmt, semitones):
+    def _worker(self, src, stems, minus, fmt, semitones):
         stage = "download"
         try:
             lib = self.app.library_dir
@@ -265,6 +288,7 @@ class StemsPage(ctk.CTkFrame):
                 input_path, stems, out_dir, fmt, self.app.ffmpeg_path, semitones,
                 on_progress=lambda frac, text: self.app.after(
                     0, lambda: (self.progress.set(frac), self.set_status(text))),
+                minus=minus,
             )
             self.app.after(0, lambda: self._on_done(out_dir, saved))
         except Exception as e:
@@ -314,7 +338,7 @@ class StemsPage(ctk.CTkFrame):
         self.start_btn.configure(state="normal", text="분리 시작")
         self.open_btn.configure(state="normal")
         self.progress.set(1.0)
-        self.set_status(f"완료: {len(saved)}개 스템 저장")
+        self.set_status(f"완료: {len(saved)}개 파일 저장")
         self.app.notify_library_changed()
         names = "\n".join(os.path.basename(p) for p in saved)
         messagebox.showinfo("완료", f"스템 분리가 끝났습니다.\n\n{names}\n\n폴더:\n{out_dir}")

@@ -26,6 +26,14 @@ def test_default_stems_checked():
         app.destroy()
 
 
+def test_default_minus_unchecked():
+    app, page = _page()
+    try:
+        assert page.selected_minus() == []
+    finally:
+        app.destroy()
+
+
 def test_resolve_input_prefers_file(tmp_path):
     app, page = _page()
     try:
@@ -53,8 +61,34 @@ def test_start_requires_stem(monkeypatch, tmp_path):
         page.file_path = str(f)
         for var in page.stem_vars.values():
             var.set(False)
+        assert all(not v.get() for v in page.minus_vars.values())
         page.on_start_click()
         assert warned and started == [] and app.busy is False
+    finally:
+        app.destroy()
+
+
+def test_start_allows_minus_only(monkeypatch, tmp_path):
+    app, page = _page()
+    try:
+        warned = []
+        monkeypatch.setattr("stems_page.messagebox.showwarning", lambda *a: warned.append(a))
+        started = []
+        monkeypatch.setattr("stems_page.threading.Thread",
+                            lambda **kw: started.append(kw) or _FakeThread())
+        f = tmp_path / "a.mp3"
+        f.write_bytes(b"x")
+        page.file_path = str(f)
+        for var in page.stem_vars.values():
+            var.set(False)
+        page.minus_vars["guitar"].set(True)
+        app.ffmpeg_path = "fake-ffmpeg"
+        page.on_start_click()
+        assert warned == []
+        assert len(started) == 1
+        assert started[0]["args"][1] == []
+        assert started[0]["args"][2] == ["guitar"]
+        assert app.busy is True
     finally:
         app.destroy()
 
@@ -82,6 +116,23 @@ def test_folder_label_follows_app(monkeypatch, tmp_path):
         app.choose_folder()
         # 스템 탭 폴더 글자는 저장 폴더가 아니라 보관함 경로를 보여준다 (library 설계 변경)
         assert page.folder_label.cget("text") == library.library_dir(str(tmp_path))
+    finally:
+        app.destroy()
+
+
+def test_page_fits_in_window():
+    """창 크기를 키우지 않고 줄을 넣었으니, 아래 버튼이 잘리지 않고
+    두 체크박스 열이 탭 오른쪽 가장자리를 넘지 않아야 한다."""
+    app, page = _page()
+    try:
+        app.tabview.set("스템 분리")
+        app.update()
+        assert page.open_btn.winfo_y() + page.open_btn.winfo_height() <= page.master.winfo_height()
+        right_edge = page.winfo_rootx() + page.winfo_width()
+        boxes = [cb for grid in (page.stem_grid, page.minus_grid) for cb in grid.winfo_children()]
+        assert len(boxes) == 12
+        for cb in boxes:
+            assert cb.winfo_rootx() + cb.winfo_width() <= right_edge, cb.cget("text")
     finally:
         app.destroy()
 
