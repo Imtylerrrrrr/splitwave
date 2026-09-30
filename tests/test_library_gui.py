@@ -233,7 +233,7 @@ def test_download_and_stems_paths_under_library(monkeypatch, tmp_path):
         sep_calls = {}
 
         def fake_separate(input_path, stems, out_dir, fmt, ffmpeg, semitones,
-                          on_progress=None):
+                          on_progress=None, minus=()):
             sep_calls["out_dir"] = out_dir
             return []
 

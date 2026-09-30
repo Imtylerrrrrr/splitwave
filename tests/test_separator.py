@@ -94,6 +94,34 @@ def test_separate_rejects_bad_args(tmp_path):
         separator.separate(str(src), ["strings"], str(tmp_path / "o"), "wav", FFMPEG)
     with pytest.raises(RuntimeError, match="FFmpeg"):
         separator.separate(str(src), ["vocals"], str(tmp_path / "o"), "wav", None)
+    with pytest.raises(ValueError):
+        separator.separate(str(src), [], str(tmp_path / "o"), "wav", FFMPEG, minus=["strings"])
+    with pytest.raises(ValueError):
+        separator.separate(str(src), [], str(tmp_path / "o"), "wav", FFMPEG, minus=[])
+
+
+def test_separate_minus_is_origin_minus_stem(tmp_path):
+    src = make_sine_wav(tmp_path / "song.wav", seconds=3.0)
+    out = tmp_path / "song_stems"
+    saved = separator.separate(str(src), ["guitar"], str(out), "wav", FFMPEG, minus=["guitar"])
+    assert [Path(p).name for p in saved] == ["기타.wav", "기타 제거.wav"]
+    for p in saved:
+        assert abs(wav_seconds(Path(p)) - 3.0) < 0.1
+    orig = separator.decode_with_ffmpeg(str(src), FFMPEG)
+    guitar = separator.decode_with_ffmpeg(saved[0], FFMPEG)
+    minus = separator.decode_with_ffmpeg(saved[1], FFMPEG)
+    n = min(orig.shape[1], guitar.shape[1], minus.shape[1])
+    diff = (orig[:, :n] - guitar[:, :n] - minus[:, :n]).abs().max()
+    assert diff < 0.02
+
+
+def test_separate_minus_only_with_key_shift(tmp_path):
+    src = make_sine_wav(tmp_path / "song.wav", seconds=3.0)
+    out = tmp_path / "song_stems"
+    saved = separator.separate(str(src), [], str(out), "mp3", FFMPEG, semitones=-3, minus=["bass"])
+    assert [Path(p).name for p in saved] == ["베이스 제거 (키-3).mp3"]
+    assert Path(saved[0]).stat().st_size > 1000
+    assert list(out.glob("*.wav")) == []
 
 
 def test_translate_stem_error():

@@ -75,19 +75,24 @@ def separate(
     ffmpeg: str | None,
     semitones: int = 0,
     on_progress: ProgressFn | None = None,
+    minus: list[str] = (),
 ) -> list[str]:
     """input_path 를 분리해 out_dir 에 저장하고, 저장된 파일 경로 목록을 돌려준다.
 
     stems: demucs 이름 목록 (STEM_LABELS 의 키). 저장 순서 = 이 목록 순서.
     fmt:   "wav" | "mp3"
+    minus: 빼고 들을 악기(demucs 이름). 악기마다 "<라벨> 제거" 파일을 하나씩 저장한다.
     """
     if fmt not in ("wav", "mp3"):
         raise ValueError(f"지원하지 않는 포맷: {fmt}")
     unknown = [s for s in stems if s not in STEM_LABELS]
     if unknown:
         raise ValueError(f"알 수 없는 스템: {unknown}")
-    if not stems:
-        raise ValueError("저장할 스템이 없습니다.")
+    unknown_minus = [s for s in minus if s not in STEM_LABELS]
+    if unknown_minus:
+        raise ValueError(f"알 수 없는 악기: {unknown_minus}")
+    if not stems and not minus:
+        raise ValueError("저장할 스템이나 뺄 악기가 없습니다.")
     if not ffmpeg:
         raise RuntimeError("스템 분리에는 FFmpeg가 필요한데 찾지 못했습니다.")
 
@@ -114,29 +119,33 @@ def separate(
 
     report(0.05, "오디오 읽는 중…")
     wav = decode_with_ffmpeg(input_path, ffmpeg)
-    _, sources = sep.separate_tensor(wav, SAMPLE_RATE)
+    origin, sources = sep.separate_tensor(wav, SAMPLE_RATE)
 
     report(0.90, "저장 중…")
     out = Path(out_dir)
     saved: list[str] = []
-    for name in stems:
-        label = STEM_LABELS[name]
+
+    def save(tensor, base: str) -> str:
         if semitones == 0:
-            target = out / f"{label}.{fmt}"
-            demucs.api.save_audio(sources[name], target,
-                                  samplerate=sep.samplerate, bitrate=320)
+            target = out / f"{base}.{fmt}"
+            demucs.api.save_audio(tensor, target, samplerate=sep.samplerate, bitrate=320)
         else:
             sign = f"+{semitones}" if semitones > 0 else str(semitones)
-            target = out / f"{label} (키{sign}).{fmt}"
-            tmp = out / f"{label}.tmp.wav"
-            demucs.api.save_audio(sources[name], tmp, samplerate=sep.samplerate)
+            target = out / f"{base} (키{sign}).{fmt}"
+            tmp = out / f"{base}.tmp.wav"
+            demucs.api.save_audio(tensor, tmp, samplerate=sep.samplerate)
             try:
                 _reencode(tmp, target, semitones, ffmpeg)
             finally:
                 tmp.unlink(missing_ok=True)
-        saved.append(str(target))
+        return str(target)
 
-    report(1.0, f"완료: {len(saved)}개 스템 저장")
+    for name in stems:
+        saved.append(save(sources[name], STEM_LABELS[name]))
+    for name in minus:
+        saved.append(save(origin - sources[name], f"{STEM_LABELS[name]} 제거"))
+
+    report(1.0, f"완료: {len(saved)}개 파일 저장")
     return saved
 
 
