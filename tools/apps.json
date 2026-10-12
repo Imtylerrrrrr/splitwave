@@ -58,8 +58,7 @@
             "patterns": [
               "splitwave-full/splitwave-full.exe",
               "splitwave-full/_internal/base_library.zip",
-              "splitwave-full/_internal/*.dist-info/*",
-            "splitwave-full/_internal/yt_dlp/*"
+              "splitwave-full/_internal/*.dist-info/*"
             ]
           },
           {

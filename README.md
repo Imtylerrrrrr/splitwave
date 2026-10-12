@@ -146,7 +146,7 @@ VERSION          릴리스 버전
 
 `main`에 push하면 GitHub Actions가 아래 순서로 만들어요 (`.github/workflows/build-windows.yml`):
 
-- `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 11 MB 남짓이에요 (기존 범용 빌드는 159 MB). `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요. 빌드 결과는 바이트 단위로 재현되지 않아서, 같은 입력(소스 버전·빌드 스크립트)으로 만든 `ffmpeg.exe` 를 지난 릴리스 자산(`ffmpeg-audio-<key>.exe`)에서 다시 써요. 그래야 풀 버전의 실행 환경 묶음이 릴리스 사이에 그대로예요. 파이썬 패키지도 `constraints-full.txt` 로 전부 고정해요 (yt-dlp 만 제외, 앱 묶음에 둠).
+- `build-ffmpeg` → 오디오 전용 `ffmpeg.exe`. 공식 소스(버전·SHA-256 고정)를 `tools/ffmpeg/build.sh`로 정적 빌드해요. 영상 코덱을 빼고 오디오 디코더·컨테이너·인코더(libmp3lame, aac, libopus, flac, pcm)만 켜서 11 MB 남짓이에요 (기존 범용 빌드는 159 MB). `tools/ffmpeg/smoke.sh`가 앱이 쓰는 ffmpeg 명령을 전부 실행해 확인하고, 스크립트가 안 바뀌면 캐시를 재사용해요. 빌드 결과는 바이트 단위로 재현되지 않아서, 같은 입력(소스 버전·빌드 스크립트)으로 만든 `ffmpeg.exe` 를 지난 릴리스 자산(`ffmpeg-audio-<key>.exe`)에서 다시 써요. 그래야 풀 버전의 실행 환경 묶음이 릴리스 사이에 그대로예요. 파이썬 패키지도 `constraints-full.txt` 로 전부 고정해요 (yt-dlp 만 제외. 순수 파이썬이라 실행파일 안에 들어가서 앱 묶음에 속해요).
 - `build-lite` → `splitwave.exe` (PyInstaller onefile, ffmpeg 번들)
 - `build-full` → `splitwave-full.zip` (onedir, ffmpeg + Demucs 가중치 번들. 가중치는 한 벌만 넣고, `torch.compile`·ONNX 등 추론에 안 쓰는 모듈은 제외해요)
 
