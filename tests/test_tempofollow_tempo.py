@@ -3,7 +3,8 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from tempofollow.stretch import WSOLA
-from tempofollow.tempo import TempoTracker, estimate_bpm, estimate_delay
+from tempofollow.tempo import (MIN_BEAT_STRENGTH, TempoTracker, estimate_bpm, estimate_delay,
+                               phase_correction, phase_error, track_beats)
 
 
 def clicks(bpm, seconds, sr):
@@ -107,6 +108,8 @@ def test_quiet_sounds_do_not_move_tempo():
 
 
 def test_deadband_ignores_playback_tempo():
+    # 재생 템포와 0.5 % 안인 측정은 자기 소리일 수 있어 버린다.
+    # 부분 창(2초)에서도 치우침이 0.5 % 를 넘으면 안 된다 (보간을 사전 가중치 없이 하는 이유)
     t = TempoTracker(48000, 110)
     t.playback_bpm = 100.0
     feed(t, clicks(100, 8, 48000))
@@ -208,3 +211,138 @@ def test_delay_found_when_ref_arrives_late():
             t.process_ref(ref[j:j + step])
     assert t.bleed_delay_s is not None
     assert abs(t.bleed_delay_s * sr - delay) <= 2
+
+
+def ramp_clicks(b0, b1, seconds, sr):
+    """클릭 간격이 선형으로 빨라지는 클릭 트랙. 각 클릭 시점의 bpm = b0 + (b1-b0)·t/총길이."""
+    rng = np.random.default_rng(0)
+    y = np.zeros(int(seconds * sr), dtype=np.float32)
+    n = int(0.005 * sr)
+    burst = 0.8 * rng.uniform(-1, 1, n) * np.exp(-np.linspace(0, 5, n))
+    times = []
+    t = 0.0
+    while int(t * sr) + n <= len(y):
+        s = int(t * sr)
+        y[s:s + n] += burst
+        times.append(s / sr)
+        t += 60.0 / (b0 + (b1 - b0) * t / seconds)
+    return y, np.array(times)
+
+
+def test_partial_window_adopts_sooner():
+    # 창 3초 중 2초(최소 3박)만 차도 재므로 4초 안에 첫 채택이 나온다
+    t = TempoTracker(44100, 110)
+    feed(t, clicks(100, 4, 44100))
+    assert t.measurements >= 1
+    feed(t, clicks(100, 2, 44100))
+    assert abs(t.bpm - 100) < 1
+
+
+def test_track_beats_click_track():
+    beats, strength = track_beats(clicks(100, 20, 44100), 44100, 100)
+    assert strength > 0.8
+    late = beats[beats > 1.0]
+    err = late - np.round(late / 0.6) * 0.6
+    assert np.abs(err).max() < 0.015
+    assert abs(np.median(np.diff(beats)) - 0.6) < 0.005
+
+
+def test_track_beats_follow_drift():
+    y, times = ramp_clicks(100, 106, 30, 44100)
+    beats, _ = track_beats(y, 44100, 100)
+    late = beats[beats > 1.0]
+    nearest = times[np.abs(late[:, None] - times[None, :]).argmin(axis=1)]
+    assert np.abs(late - nearest).max() < 0.02
+
+
+def test_track_beats_rejects_noise():
+    rng = np.random.default_rng(0)
+    noise = rng.uniform(-0.1, 0.1, 60 * 44100).astype(np.float32)
+    _, strength = track_beats(noise, 44100, 100)
+    assert strength < MIN_BEAT_STRENGTH
+    _, strength = track_beats(clicks(100, 20, 44100), 44100, 100)
+    assert strength >= MIN_BEAT_STRENGTH
+
+
+def test_live_beat_phase_matches_clicks():
+    sr = 44100
+    t = TempoTracker(sr, 100)
+    feed(t, clicks(100, 8, sr))
+    assert t.beat_end is not None
+    assert t.beat_conf > 3
+    # 클릭은 0.6 s 배수에 있다
+    assert abs(((t.beat_end / sr + 0.3) % 0.6) - 0.3) < 0.025
+    assert t.beat_at > sr * 6
+
+
+def test_phase_error_wraps():
+    assert phase_error(130, 100, 100) == 30
+    assert phase_error(180, 100, 100) == -20
+    assert phase_error(80, 100, 100) == -20
+    assert phase_error(150, 100, 100) == 50
+    assert phase_correction(0.1) == 0.04
+    assert phase_correction(-0.05) == -0.02
+    assert phase_correction(0.5) == 0.04
+
+
+def simulate_phase(drum, drum_offset_s, seconds=45, correct=True):
+    """늘린 음악이 120 ms 늦게 마이크에 새는 닫힌 루프에서 박 위치 맞춤.
+    시간축은 엔진과 같다: 내보낸 샘플 수가 ref 축, 마이크 축 = ref + 블리드 지연.
+    (err 기록 시각(초), err(초)) 목록과 마지막 ratio 를 돌려준다."""
+    sr = 44100
+    base = 110.0
+    delay = round(0.12 * sr)
+    step = round(0.25 * sr)
+    hop = 1024
+    tr = TempoTracker(sr, base)
+    ratio = 1.0
+    dl = np.zeros(delay)
+    tone = tones(110, 60, sr)
+    beats, _ = track_beats(tone, sr, 110)
+    beats = beats * sr
+    w = WSOLA(np.stack([tone, tone], axis=1))
+    pend = np.zeros(0)
+    written = 0           # WSOLA 가 만든 샘플 수 (엔진의 _written)
+    drum = np.concatenate([np.zeros(round(drum_offset_s * sr), np.float32), drum])
+    errs = []
+    for i in range(0, seconds * sr, step):
+        while len(pend) < step:    # 현재 재생 비율로 늘린 음
+            chunk = w.next_chunk(ratio).mean(axis=1)
+            pend = np.concatenate([pend, chunk])
+            written += len(chunk)
+        ref, pend = pend[:step], pend[step:]
+        buf = np.concatenate([dl, ref])
+        bleed, dl = buf[:step], buf[step:]
+        mic = bleed + drum[i:i + step]
+        tr.process_ref(ref)
+        tr.process(mic)
+        target = float(np.clip(tr.bpm / base, 0.7, 1.4))
+        err = None
+        if tr.beat_end is not None and tr.mic_total - tr.beat_at <= 2.0 * sr:
+            in_pos = w.in_pos + hop * ratio                 # 다음 청크의 곡 위치
+            k = int(np.searchsorted(beats, in_pos))
+            if k < len(beats):
+                ref_idx = written + (beats[k] - in_pos) / ratio
+                d = tr._delay if tr._delay is not None else delay
+                err = phase_error(ref_idx + d, tr.beat_end, 60.0 / tr.bpm * sr) / sr
+        if err is not None:
+            errs.append(((i + step) / sr, err))
+            if correct:
+                target *= 1 + phase_correction(err)
+        ratio += float(np.clip(target - ratio, -0.03, 0.03))
+        tr.playback_bpm = base * ratio
+    return ratio, errs
+
+
+def _late_mean_abs(errs, seconds, last=10):
+    return float(np.mean([abs(e) for t, e in errs if t > seconds - last]))
+
+
+def test_closed_loop_phase_alignment():
+    drum = clicks(100, 60, 44100)
+    ratio, errs = simulate_phase(drum, 0.25, 45, correct=True)
+    assert _late_mean_abs(errs, 45) < 0.03
+    assert abs(110 * ratio - 100) < 2.5
+    # 보정이 없으면 빠르기는 맞아도 박이 어긋난 채로 남는다
+    _, errs = simulate_phase(drum, 0.25, 45, correct=False)
+    assert _late_mean_abs(errs, 45) > 0.08

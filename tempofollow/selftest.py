@@ -12,7 +12,7 @@ import numpy as np
 from common import find_ffmpeg
 from tempofollow.engine import SR, decode
 from tempofollow.stretch import WSOLA
-from tempofollow.tempo import TempoTracker, estimate_bpm
+from tempofollow.tempo import TempoTracker, estimate_bpm, track_beats
 
 
 def _click_track(bpm: float, seconds: float, sr: int) -> np.ndarray:
@@ -92,6 +92,17 @@ def selftest() -> int:
             return 1
     except Exception as e:
         print(f"selftest: TempoTracker failed: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        beats, strength = track_beats(mono, SR, bpm)
+    except Exception as e:
+        print(f"selftest: track_beats failed: {e}", file=sys.stderr)
+        return 1
+    gap = float(np.median(np.diff(beats))) if len(beats) > 1 else 0.0
+    if len(beats) < 6 or strength < 0.5 or abs(gap - 60 / bpm) > 0.02 * 60 / bpm:
+        print(f"selftest: track_beats {len(beats)} beats, strength {strength:.2f}, "
+              f"median gap {gap:.3f}s, expected {60 / bpm:.3f}s", file=sys.stderr)
         return 1
 
     try:

@@ -10,7 +10,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from common import resource_path, find_ffmpeg
-from library import base_dir, library_dir, list_tracks, menu_labels
+from library import base_dir, library_dir, list_tracks, load_settings, menu_labels, save_settings
 from tempofollow.engine import SR, Engine, default_devices, list_devices
 from tempofollow.tempo import estimate_bpm
 
@@ -18,6 +18,7 @@ AUDIO_TYPES = [("오디오 파일", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac *.opus
 
 LIBRARY_GUIDE_ITEM = "(보관함에서 고르기)"
 LIBRARY_EMPTY_ITEM = "(받은 곡이 없어요)"
+SETTINGS_KEY = "tempofollow"    # 공용 설정 파일 안에서 이 앱이 쓰는 항목
 
 
 def fmt_time(seconds: float) -> str:
@@ -28,6 +29,29 @@ def fmt_time(seconds: float) -> str:
 def library_menu(lib: str) -> dict[str, str]:
     """보관함 드롭다운 항목. 안내 항목과 빈 목록 문구는 포함하지 않는다."""
     return menu_labels(list_tracks(lib))
+
+
+def song_file_for(tracks, path: str) -> str | None:
+    """스템 path 와 같은 묶음의 곡 파일 경로. 곡 자체를 골랐거나 곡 파일이 없으면 None.
+    곡 파일은 드럼이 있어 박을 찾기 좋고, 스템과 길이가 같다."""
+    for t in tracks:
+        if t.path == path and t.stem is not None:
+            return next((s.path for s in tracks if s.song == t.song and s.stem is None), None)
+    return None
+
+
+def status_text(st: dict, wait_for_hit: bool) -> str:
+    """재생 중 상태줄 문구. st 는 Engine.status()."""
+    if wait_for_hit and not st["playing"]:
+        return "드럼을 치면 시작합니다"
+    parts = ["따라가는 중" if st.get("locked") else "템포 찾는 중"]
+    if st.get("beats_ok") is False:
+        parts.append("곡에서 박을 못 찾아 박자 맞춤은 꺼짐")
+    elif st.get("locked") and st.get("phase_ms") is not None:
+        parts.append(f"박자 오차 {st['phase_ms']:+.0f} ms")
+    if st.get("bleed_delay_ms") is not None:
+        parts.append(f"스피커 소리 상쇄 중 (지연 {st['bleed_delay_ms']:.0f} ms)")
+    return " · ".join(parts)
 
 
 def menu_values(items: dict[str, str]) -> list[str]:
@@ -46,7 +70,7 @@ class App(ctk.CTk):
         ctk.set_default_color_theme(resource_path("assets/theme.json"))
 
         self.title("Tempo Follow")
-        self.geometry("480x640")
+        self.geometry("560x690")
         self.resizable(False, False)
         self._set_window_icon()
 
@@ -58,6 +82,7 @@ class App(ctk.CTk):
         self.outputs = {name: idx for idx, name in reversed(outputs)}
 
         self._build_ui()
+        self._apply_settings()
         self.on_refresh_library()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -103,7 +128,7 @@ class App(ctk.CTk):
         ctk.CTkButton(row, text="새로고침", width=90, command=self.on_refresh_library,
                       **gray).pack(side="right")
         self.library_menu = ctk.CTkOptionMenu(
-            row, values=[LIBRARY_EMPTY_ITEM], width=260, dynamic_resizing=False,
+            row, values=[LIBRARY_EMPTY_ITEM], width=340, dynamic_resizing=False,
             command=self.on_choose_library)
         self.library_menu.pack(side="left", padx=(10, 0))
 
@@ -117,11 +142,11 @@ class App(ctk.CTk):
         # 3. 마이크 / 출력 장치
         in_idx, out_idx = default_devices()
         row = self._row("마이크")
-        self.in_menu = ctk.CTkOptionMenu(row, values=list(self.inputs) or ["없음"], width=300)
+        self.in_menu = ctk.CTkOptionMenu(row, values=list(self.inputs) or ["없음"], width=380)
         self.in_menu.set(self._default_name(self.inputs, in_idx))
         self.in_menu.pack(side="right")
         row = self._row("출력 장치")
-        self.out_menu = ctk.CTkOptionMenu(row, values=list(self.outputs) or ["없음"], width=300)
+        self.out_menu = ctk.CTkOptionMenu(row, values=list(self.outputs) or ["없음"], width=380)
         self.out_menu.set(self._default_name(self.outputs, out_idx))
         self.out_menu.pack(side="right")
 
@@ -138,6 +163,9 @@ class App(ctk.CTk):
         self.hit_check = ctk.CTkCheckBox(row, text="첫 타격에 맞춰 시작")
         self.hit_check.select()
         self.hit_check.pack(side="left")
+        self.phase_check = ctk.CTkCheckBox(row, text="박자 위치도 맞춤")
+        self.phase_check.select()
+        self.phase_check.pack(side="left", padx=(20, 0))
         row = self._row("타격 감도")
         self.hit_value = ctk.CTkLabel(row, text="-20 dB", width=60)
         self.hit_value.pack(side="right")
@@ -158,15 +186,18 @@ class App(ctk.CTk):
         nums.pack(fill="x", padx=20, pady=(16, 0))
         big = ctk.CTkFont(size=28, weight="bold")
         self.num_labels = []
-        for col, caption in enumerate(["드럼 BPM", "재생 BPM", "속도"]):
+        for col, caption in enumerate(["드럼 BPM", "재생 BPM", "속도", "박자 오차"]):
             nums.grid_columnconfigure(col, weight=1)
             value = ctk.CTkLabel(nums, text="-", font=big)
             value.grid(row=0, column=col)
             ctk.CTkLabel(nums, text=caption, font=small, text_color="gray70").grid(
                 row=1, column=col)
             self.num_labels.append(value)
+        self.pos_bar = ctk.CTkProgressBar(self)
+        self.pos_bar.set(0)
+        self.pos_bar.pack(fill="x", padx=20, pady=(12, 0))
         self.progress_label = ctk.CTkLabel(self, text="0:00 / 0:00")
-        self.progress_label.pack(pady=(8, 0))
+        self.progress_label.pack(pady=(4, 0))
 
         # 8. 시작/정지 + 상태줄
         self.start_btn = ctk.CTkButton(
@@ -193,6 +224,37 @@ class App(ctk.CTk):
     def set_status(self, text: str):
         self.status_label.configure(text=text)
 
+    def _apply_settings(self):
+        """지난번 장치·감도·체크 상태를 공용 설정 파일에서 되살린다. 없는 장치는 건너뛴다."""
+        s = load_settings().get(SETTINGS_KEY, {})
+        if not isinstance(s, dict):
+            return
+        if s.get("input") in self.inputs:
+            self.in_menu.set(s["input"])
+        if s.get("output") in self.outputs:
+            self.out_menu.set(s["output"])
+        if isinstance(s.get("hit_db"), (int, float)):
+            self.hit_slider.set(s["hit_db"])
+            self.hit_value.configure(text=f"{int(round(s['hit_db']))} dB")
+        if isinstance(s.get("range_pct"), (int, float)):
+            self.range_entry.delete(0, "end")
+            self.range_entry.insert(0, f"{s['range_pct']:g}")
+        for key, box in (("wait_for_hit", self.hit_check), ("follow_phase", self.phase_check)):
+            if key in s:
+                box.select() if s[key] else box.deselect()
+
+    def _save_settings(self):
+        settings = load_settings()
+        try:
+            range_pct = float(self.range_entry.get())
+        except ValueError:
+            range_pct = None
+        settings[SETTINGS_KEY] = dict(
+            input=self.in_menu.get(), output=self.out_menu.get(),
+            hit_db=float(self.hit_slider.get()), range_pct=range_pct,
+            wait_for_hit=bool(self.hit_check.get()), follow_phase=bool(self.phase_check.get()))
+        save_settings(settings)
+
     # ── 곡 불러오기 / BPM 추정 ──
     def on_choose_file(self):
         path = filedialog.askopenfilename(filetypes=AUDIO_TYPES)
@@ -200,24 +262,38 @@ class App(ctk.CTk):
             return
         self._load_file(path)
 
-    def _load_file(self, path):
+    def _load_file(self, path, beat_path=None):
+        """곡을 불러오고 BPM 을 추정해 채운다. beat_path 는 박을 찾을 원곡(없으면 곡 자체)."""
         self.file_label.configure(text=os.path.basename(path))
         self.set_status("불러오는 중…")
 
         def work():
             try:
-                self.engine.load(path)
-                msg = f"길이 {fmt_time(self.engine.duration_s)}"
+                self.engine.load(path, beat_path)
             except Exception as e:
                 self.engine.audio = None
-                msg = f"불러오기 실패: {e}"
-            self.after(0, lambda: self.set_status(msg))
+                self.after(0, lambda: self.set_status(f"불러오기 실패: {e}"))
+                return
+            length = fmt_time(self.engine.duration_s)
+            try:
+                bpm = estimate_bpm(self.engine.beat_source, SR)
+            except Exception:
+                self.after(0, lambda: self.set_status(
+                    f"길이 {length} · BPM 을 추정하지 못했어요. 직접 입력하세요."))
+                return
+
+            def done():
+                self.bpm_entry.delete(0, "end")
+                self.bpm_entry.insert(0, f"{bpm:.1f}")
+                self.set_status(f"길이 {length} · 추정 BPM {bpm:.1f} (틀리면 고치세요)")
+            self.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
 
     def on_refresh_library(self):
         lib = library_dir(base_dir())
-        self.library_items = library_menu(lib)
+        self.library_tracks = list_tracks(lib)
+        self.library_items = menu_labels(self.library_tracks)
         values = menu_values(self.library_items)
         self.library_menu.configure(values=values)
         self.library_menu.set(values[0])
@@ -229,18 +305,18 @@ class App(ctk.CTk):
         path = self.library_items.get(value)
         if path is None:
             return
-        self._load_file(path)
+        self._load_file(path, song_file_for(self.library_tracks, path))
 
     def on_estimate(self):
-        audio = self.engine.audio
-        if audio is None:
+        source = self.engine.beat_source
+        if source is None:
             self.set_status("먼저 곡 파일을 선택하세요.")
             return
         self.set_status("BPM 추정 중…")
 
         def work():
             try:
-                bpm = estimate_bpm(audio.mean(axis=1), SR)
+                bpm = estimate_bpm(source, SR)
             except Exception as e:
                 self.after(0, lambda: self.set_status(f"BPM 추정 실패: {e}"))
                 return
@@ -280,9 +356,11 @@ class App(ctk.CTk):
             return
 
         self.wait_for_hit = bool(self.hit_check.get())
+        self._save_settings()
         self.engine.start(bpm, self.inputs[self.in_menu.get()],
                           self.outputs[self.out_menu.get()], range_pct,
-                          self.wait_for_hit, self.hit_slider.get())
+                          self.wait_for_hit, self.hit_slider.get(),
+                          follow_phase=bool(self.phase_check.get()))
         if self.engine.error:
             self.set_status(f"오류: {self.engine.error}")
             return
@@ -312,18 +390,17 @@ class App(ctk.CTk):
         self.num_labels[0].configure(text=f"{st['bpm']:.1f}")
         self.num_labels[1].configure(text=f"{st['playback_bpm']:.1f}")
         self.num_labels[2].configure(text=f"x{st['ratio']:.2f}")
+        self.num_labels[3].configure(
+            text="-" if st["phase_ms"] is None else f"{st['phase_ms']:+.0f} ms")
+        self.pos_bar.set(min(st["position_s"] / st["duration_s"], 1.0) if st["duration_s"] else 0)
         self.progress_label.configure(
             text=f"{fmt_time(st['position_s'])} / {fmt_time(st['duration_s'])}")
-        if self.wait_for_hit and not st["playing"]:
-            self.set_status("드럼을 치면 시작합니다")
-        elif st["bleed_delay_ms"] is not None:
-            self.set_status(f"재생 중 · 스피커 소리 상쇄 중 (지연 {st['bleed_delay_ms']:.0f} ms)")
-        else:
-            self.set_status("재생 중")
+        self.set_status(status_text(st, self.wait_for_hit))
         self.after(100, self._poll)
 
     def on_close(self):
         self.engine.stop()
+        self._save_settings()
         self.destroy()
 
 

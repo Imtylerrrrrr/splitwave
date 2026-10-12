@@ -71,7 +71,9 @@ def _acf_peak_bpm(o, sr, hop, bpm_lo, bpm_hi, prior_bpm, prior_sigma_oct):
 
     delta = 0.0
     if 0 < i < len(score) - 1:
-        a, b, c = score[i - 1], score[i], score[i + 1]
+        # 보간은 사전 가중치 없는 자기상관으로 한다. 가중치까지 넣으면 창이 짧을 때
+        # (피크가 넓을 때) 사전 쪽으로 0.5 % 쯤 끌려간다
+        a, b, c = r[lags[i] - 1], r[lags[i]], r[lags[i] + 1]
         denom = a - 2 * b + c
         delta = 0.0 if denom == 0 else float(np.clip(0.5 * (a - c) / denom, -0.5, 0.5))
     bpm = float(np.clip(60 * sr / ((lags[i] + delta) * hop), bpm_lo, bpm_hi))
@@ -84,10 +86,11 @@ class TempoTracker:
     process_ref로 앱이 내보낸 소리를 주면 마이크로 새어 든 몫을 스펙트럼에서 빼고,
     마이크 온셋 대부분이 자기 소리인 창은 측정하지 않는다."""
 
-    def __init__(self, sr, base_bpm, hop=256, n_fft=1024, ratio_range=(0.7, 1.4), window_s=4.0,
-                 update_s=0.25, tau_s=0.5, prior_sigma_oct=0.1, min_crest=2.5,
+    def __init__(self, sr, base_bpm, hop=256, n_fft=1024, ratio_range=(0.7, 1.4), window_s=3.0,
+                 update_s=0.25, tau_s=0.3, prior_sigma_oct=0.1, min_crest=2.5,
                  min_confidence=0.3, deadband=0.005, beta=2.0, tail=0.9, lam=0.999,
-                 max_delay_s=0.8, min_delay_conf=4.0, floor=0.003, min_frac=0.4, gamma=5.0):
+                 max_delay_s=0.8, min_delay_conf=4.0, floor=0.003, min_frac=0.4, gamma=5.0,
+                 min_fill_s=2.0, min_beat_conf=3.0, beat_half_life_s=1.0):
         self.sr = sr
         self.hop = hop
         self.n_fft = n_fft
@@ -116,6 +119,13 @@ class TempoTracker:
         W = round(window_s * sr / hop)
         self._ring = np.zeros(W)        # 상쇄 후 플럭스
         self._raw_ring = np.zeros(W)    # 원본 마이크 플럭스
+        self._min_frames = round(max(min_fill_s, 3 * 60 / base_bpm) * sr / hop)   # 최소 3박
+        self.beat_end = None      # 가장 최근 드러머 박의 마이크 절대 위치 (샘플, 실수)
+        self.beat_at = 0          # beat_end 를 구한 시점의 마이크 절대 위치
+        self.beat_conf = 0.0
+        self.min_beat_conf = min_beat_conf
+        self.beat_half_life_s = beat_half_life_s
+        self._o = None            # 마지막으로 게이트를 통과한 창
         self._update_frames = round(update_s * sr / hop)
         self._gcc_frames = round(0.5 * sr / hop)
         self._hold_samples = 8 * sr      # 출력이 들리기 시작한 뒤 지연을 찾으려 기다리는 한도
@@ -142,6 +152,10 @@ class TempoTracker:
         self._var = np.zeros(nb)
         self._n = np.zeros(nb)    # 빈별 학습 프레임 수
         self._scale = floor
+
+    @property
+    def mic_total(self) -> int:
+        return self._mic_total
 
     def process_ref(self, mono: np.ndarray) -> None:
         """앱이 내보낸 소리(모노). 마이크로 새어 들어온 몫을 빼는 데 쓴다."""
@@ -218,7 +232,7 @@ class TempoTracker:
             self._update_delay(end)
         if self._since >= self._update_frames:
             self._since = 0
-            self._measure()
+            self._measure(end)
 
     def _update_delay(self, end) -> None:
         n = 2 * self.sr
@@ -242,8 +256,10 @@ class TempoTracker:
             self._delay = int(med)
             self.bleed_delay_s = self._delay / self.sr
 
-    def _measure(self) -> None:
+    def _measure(self, end) -> None:
         cand = self._candidate()
+        if cand is not None:
+            self._update_beat(self._o, end)
         self._cands = (self._cands + [cand])[-8:]
         good = [c for c in self._cands if c is not None]
         if cand is None or len(good) < 6:
@@ -260,17 +276,21 @@ class TempoTracker:
 
     def _candidate(self):
         """이번 창의 템포 후보. 게이트에 걸리면 None."""
-        # 링이 한 번 다 차기 전에는 0 구간과 신호 구간의 경계가 crest·ACF를 속인다
-        if self._frames < len(self._ring):
+        # 링이 min_fill 만큼 차면 찬 부분만으로 잰다. 0 구간을 섞으면 crest·ACF 가 속는다
+        n = self._frames
+        if n < self._min_frames:
             return None
         if self._delay is None:
             if 0 < self._ref_active < self._hold_samples:
                 return None    # 출력이 막 들리기 시작했다: 새어 드는지(지연) 먼저 확인
-        elif self._cancel_frames < len(self._ring):
-            return None        # 링에 상쇄 전 프레임이 아직 남아 있다
-        o = self._ring.copy()
+        else:
+            if self._cancel_frames < self._min_frames:
+                return None    # 상쇄된 프레임이 아직 모자란다
+            n = min(n, self._cancel_frames)
+        n = min(n, len(self._ring))
+        o = self._ring[-n:].copy()
         if self._ref_total > 0:
-            self.clean_frac = float(o.sum() / (self._raw_ring.sum() + 1e-12))
+            self.clean_frac = float(o.sum() / (self._raw_ring[-n:].sum() + 1e-12))
             if self.clean_frac < self.min_frac:
                 return None    # 마이크 온셋 대부분이 자기 소리
         if o.max() <= 1e-9:
@@ -282,7 +302,31 @@ class TempoTracker:
         if res is None or res[1] < self.min_confidence:
             return None
         self.confidence = res[1]
+        self._o = o
         return res[0]
+
+    def _update_beat(self, o, end) -> None:
+        """게이트를 통과한 창 o 를 현재 박 주기로 접어 가장 최근 박의 위치를 구한다.
+        최근 프레임에 더 큰 무게를 줘서 드러머가 밀고 당기는 것을 따라간다."""
+        L = 60.0 * self.sr / (self.bpm * self.hop)          # 박 주기 (프레임, 실수)
+        j = np.arange(len(o))[::-1].astype(float)            # 거리: 가장 새 프레임이 0
+        w = 0.5 ** (j * self.hop / self.sr / self.beat_half_life_s)
+        nb = max(4, int(round(L)))
+        bins = np.floor((j % L) * nb / L).astype(int) % nb
+        folded = np.bincount(bins, weights=o * w, minlength=nb)
+        ring3 = np.concatenate([folded[-1:], folded, folded[:1]])
+        folded = np.convolve(ring3, np.ones(3) / 3, mode="valid")    # 원형 3점 평활
+        k = int(np.argmax(folded))
+        conf = float(folded[k] / (folded.mean() + 1e-12))
+        if conf < self.min_beat_conf:
+            return
+        a, b, c = folded[k - 1], folded[k], folded[(k + 1) % nb]
+        denom = a - 2 * b + c
+        delta = 0.0 if denom == 0 else float(np.clip(0.5 * (a - c) / denom, -0.5, 0.5))
+        phi = (k + 0.5 + delta) * L / nb                     # 가장 최근 박이 몇 프레임 전인가
+        self.beat_end = end - phi * self.hop
+        self.beat_at = end
+        self.beat_conf = conf
 
 
 def estimate_bpm(mono, sr, lo=60.0, hi=200.0, prior_bpm=110.0, prior_sigma_oct=0.6) -> float:
@@ -294,3 +338,53 @@ def estimate_bpm(mono, sr, lo=60.0, hi=200.0, prior_bpm=110.0, prior_sigma_oct=0
     if res is None:
         raise ValueError("no onsets")
     return res[0]
+
+
+
+MIN_BEAT_STRENGTH = 0.15
+
+
+def track_beats(mono, sr, bpm, hop=256, tightness=400.0):
+    """곡 전체의 박 시각(초)과 박 강도 (오프라인). Ellis(2007) 동적 계획법:
+    온셋 강도가 큰 곳을, 간격이 60/bpm 에 가깝게 잇는다. 템포가 조금 흔들려도 따라간다.
+    strength 는 bpm 근처 자기상관 피크(0~1). MIN_BEAT_STRENGTH 보다 작으면 박을 믿지 않는다."""
+    o = OnsetStrength(sr, hop=hop).process(np.asarray(mono, dtype=np.float64))
+    if len(o) < 8 or o.max() <= 1e-9:
+        return np.zeros(0), 0.0
+    hann7 = np.hanning(7)
+    o = np.convolve(o, hann7 / hann7.sum(), mode="same")
+    res = _acf_peak_bpm(o, sr, hop, bpm * 0.7, bpm * 1.4, bpm, 0.1)
+    strength = 0.0 if res is None else float(res[1])
+    o = o / (o.std() + 1e-9)
+    P = 60.0 * sr / (bpm * hop)
+    taus = np.arange(max(1, int(round(P / 2))), int(round(2 * P)) + 1)
+    pen = -tightness * np.log(taus / P) ** 2
+    n = len(o)
+    score = o.copy()
+    back = np.full(n, -1)
+    for t in range(int(taus[0]), n):
+        prev = t - taus
+        ok = prev >= 0
+        s = score[prev[ok]] + pen[ok]
+        k = int(np.argmax(s))
+        score[t] += s[k]
+        back[t] = prev[ok][k]
+    tail = max(0, n - int(round(P)))
+    t = tail + int(np.argmax(score[tail:]))
+    beats = []
+    while t >= 0:
+        beats.append(t)
+        t = back[t]
+    beats = np.array(beats[::-1])
+    return (beats + 1) * hop / sr, strength
+
+
+def phase_error(beat_idx, beat_end, period):
+    """곡의 박(마이크 시간축 샘플)이 드러머 박(beat_end)에서 얼마나 늦는가.
+    주기로 접어 (-period/2, period/2]. 양수 = 곡 박이 드러머 박보다 늦게 온다 (빨리 틀어야 한다)."""
+    return period / 2 - ((beat_end - beat_idx + period / 2) % period)
+
+
+def phase_correction(error_s, tc_s=2.5, max_corr=0.04):
+    """박 오차(초)를 속도 보정 비율로. 오차 100 ms 는 약 3초에 걸쳐 없앤다."""
+    return float(np.clip(error_s / tc_s, -max_corr, max_corr))

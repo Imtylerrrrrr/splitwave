@@ -12,12 +12,14 @@ import sounddevice as sd
 
 from common import find_ffmpeg
 from tempofollow.stretch import WSOLA
-from tempofollow.tempo import TempoTracker
+from tempofollow.tempo import MIN_BEAT_STRENGTH, TempoTracker, phase_correction, phase_error, track_beats
 
 SR = 44100          # 재생 샘플레이트 (디코드도 이 값)
 HOP = 1024          # WSOLA hop = 출력 blocksize
 AHEAD_S = 0.3       # 미리 채워 둘 출력 버퍼 길이 (비율 변화 반영 지연의 상한)
-SLEW_PER_S = 0.08   # 초당 최대 비율 변화
+SLEW_PER_S = 0.12   # 초당 최대 비율 변화
+DEFAULT_DEVICE_DELAY_S = 0.05    # 스피커 지연을 못 쟀을 때 장치 지연 대신 쓰는 값
+BEAT_STALE_S = 2.0  # 드러머 박 정보가 이보다 오래되면 박 보정을 안 한다
 
 
 def decode(path: str, ffmpeg: str) -> np.ndarray:
@@ -78,15 +80,24 @@ class Engine:
         self._running = False
         self._streams = []
         self._threads = []
+        self.beats = None             # 곡의 박 위치 (샘플, 실수)
+        self.beat_strength = None
+        self.beats_ok = None          # 계산 전 None, 계산 뒤 True/False
+        self.phase_error_s = None
+        self.follow_phase = True
+        self.beat_source = None
 
-    def load(self, path: str) -> None:
+    def load(self, path: str, beat_path=None) -> None:
         ffmpeg = find_ffmpeg()
         if not ffmpeg:
             raise RuntimeError("ffmpeg를 찾지 못했습니다. (README 참고)")
         self.audio = decode(path, ffmpeg)
+        # 박은 드럼이 있는 원곡에서 찾는다 (스템과 길이가 같다). 없으면 재생할 파일 자체
+        self.beat_source = decode(beat_path, ffmpeg).mean(axis=1) if beat_path else self.audio.mean(axis=1)
         self.duration_s = len(self.audio) / SR
 
-    def start(self, base_bpm, in_dev, out_dev, range_pct, wait_for_hit, hit_threshold_db):
+    def start(self, base_bpm, in_dev, out_dev, range_pct, wait_for_hit, hit_threshold_db,
+              follow_phase=True):
         r = range_pct / 100
         self.base_bpm = base_bpm
         self.ratio = 1.0
@@ -95,6 +106,14 @@ class Engine:
         self.finished = False
         self.underflows = 0
         self.error = None
+        self.follow_phase = follow_phase
+        self.beats = None
+        self.beat_strength = None
+        self.beats_ok = None
+        self.phase_error_s = None
+        self._written = 0     # 프로듀서가 링에 쓴 샘플 수
+        self._emitted = 0     # 출력 콜백이 내보낸 샘플 수 (무음 포함)
+        self._consumed = 0    # 링에서 꺼내 내보낸 샘플 수
         self._ring = np.zeros((SR * 2, 2), dtype=np.float32)
         self._lock = threading.Lock()
         self._w_idx = self._r_idx = self._count = 0
@@ -113,10 +132,13 @@ class Engine:
                 sd.OutputStream(device=out_dev, channels=2, samplerate=SR, blocksize=HOP,
                                 dtype="float32", callback=self._out_cb),
             ]
+            lat = sum(float(getattr(s, "latency", 0.0) or 0.0) for s in self._streams)
+            self._device_delay = int((lat if lat > 0 else DEFAULT_DEVICE_DELAY_S) * SR)
             self._threads = [
                 threading.Thread(target=self._guard, args=(self._analyze, wait_for_hit,
                                                            hit_threshold_db), daemon=True),
                 threading.Thread(target=self._guard, args=(self._produce, r), daemon=True),
+                threading.Thread(target=self._guard, args=(self._find_beats, base_bpm), daemon=True),
             ]
             for t in self._threads:
                 t.start()
@@ -157,6 +179,10 @@ class Engine:
             error=self.error,
             bleed_delay_ms=t.bleed_delay_s * 1000 if t and t.bleed_delay_s is not None else None,
             clean_frac=t.clean_frac if t else 1.0,
+            phase_ms=self.phase_error_s * 1000 if self.phase_error_s is not None else None,
+            beats_ok=self.beats_ok,
+            beat_strength=self.beat_strength,
+            locked=bool(t and t.measurements > 0),
         )
 
     # ── 스트림 콜백 (오디오 스레드) ──
@@ -168,12 +194,14 @@ class Engine:
 
     def _out_cb(self, outdata, frames, time_info, status):
         with self._lock:
+            self._emitted += frames
             if self.playing and self._count >= frames:
                 n = len(self._ring)
                 idx = (self._r_idx + np.arange(frames)) % n
                 outdata[:] = self._ring[idx]
                 self._r_idx = (self._r_idx + frames) % n
                 self._count -= frames
+                self._consumed += frames
             else:
                 if self.playing and self._produced_all:
                     self.finished = True    # 곡 끝까지 다 내보냄
@@ -193,6 +221,12 @@ class Engine:
         except Exception as e:
             self.error = str(e)
             self.stop()
+
+    def _find_beats(self, base_bpm):
+        beats, strength = track_beats(self.beat_source, SR, base_bpm)
+        self.beat_strength = strength
+        self.beats = beats * SR    # beats_ok 보다 먼저: 프로듀서가 beats_ok 를 보고 beats 를 읽는다
+        self.beats_ok = bool(strength >= MIN_BEAT_STRENGTH and len(beats) > 1)
 
     def _analyze(self, wait_for_hit, hit_threshold_db):
         while self._running:
@@ -222,6 +256,10 @@ class Engine:
             now = time.monotonic()
             dt, last = now - last, now
             target = float(np.clip(self.tracker.bpm / self.base_bpm, 1 - r, 1 + r))
+            err = self._phase_error()
+            self.phase_error_s = err
+            if err is not None:
+                target *= 1 + phase_correction(err)
             self.ratio += float(np.clip(target - self.ratio, -SLEW_PER_S * dt, SLEW_PER_S * dt))
             self.tracker.playback_bpm = self.base_bpm * self.ratio
             chunk = self.stretcher.next_chunk(self.ratio)
@@ -234,3 +272,22 @@ class Engine:
                 self._ring[idx] = chunk
                 self._w_idx = (self._w_idx + len(chunk)) % n
                 self._count += len(chunk)
+            self._written += len(chunk)
+
+    def _phase_error(self):
+        """곡의 다음 박이 드러머에게 닿는 시각과 드러머 박의 차이(초). 모르면 None."""
+        tr = self.tracker
+        if not (self.follow_phase and self.playing and self.beats_ok and tr.beat_end is not None):
+            return None
+        if tr.mic_total - tr.beat_at > BEAT_STALE_S * SR:
+            return None    # 드러머 박을 못 본 지 오래됐다
+        in_pos = self.stretcher.in_pos + HOP * self.ratio        # 다음 청크의 곡 위치
+        i = int(np.searchsorted(self.beats, in_pos))
+        if i >= len(self.beats):
+            return None
+        with self._lock:
+            zero_prefix = self._emitted - self._consumed          # 재생 전 무음·언더플로 만큼 출력이 밀린다
+        ref_idx = self._written + zero_prefix + (self.beats[i] - in_pos) / self.ratio
+        delay = tr._delay if tr._delay is not None else self._device_delay
+        period = 60.0 / tr.bpm * SR
+        return phase_error(ref_idx + delay, tr.beat_end, period) / SR
