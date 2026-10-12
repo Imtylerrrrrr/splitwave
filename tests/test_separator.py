@@ -124,6 +124,35 @@ def test_separate_minus_only_with_key_shift(tmp_path):
     assert list(out.glob("*.wav")) == []
 
 
+def test_separate_mix_saves_sum_and_minus_sum(tmp_path):
+    src = make_sine_wav(tmp_path / "song.wav", seconds=3.0)
+    out = tmp_path / "song_stems"
+    saved = separator.separate(str(src), ["drums", "guitar"], str(out), "wav", FFMPEG,
+                               minus=["drums", "guitar"], mix=True)
+    assert [Path(p).name for p in saved] == [
+        "드럼.wav", "기타.wav", "드럼+기타.wav", "드럼 제거.wav", "기타 제거.wav", "드럼+기타 제거.wav"]
+    orig = separator.decode_with_ffmpeg(str(src), FFMPEG)
+    drums = separator.decode_with_ffmpeg(saved[0], FFMPEG)
+    guitar = separator.decode_with_ffmpeg(saved[1], FFMPEG)
+    both = separator.decode_with_ffmpeg(saved[2], FFMPEG)
+    rest = separator.decode_with_ffmpeg(saved[5], FFMPEG)
+    n = min(t.shape[1] for t in (orig, drums, guitar, both, rest))
+    sum_diff = (drums[:, :n] + guitar[:, :n] - both[:, :n]).abs().max()
+    minus_diff = (orig[:, :n] - drums[:, :n] - guitar[:, :n] - rest[:, :n]).abs().max()
+    print(f"MEASURED sum_diff={sum_diff:.6f} minus_diff={minus_diff:.6f}")
+    assert sum_diff < 0.02
+    assert minus_diff < 0.03
+
+
+def test_separate_mix_skips_single_selection(tmp_path):
+    src = make_sine_wav(tmp_path / "song.wav", seconds=3.0)
+    out = tmp_path / "song_stems"
+    saved = separator.separate(str(src), ["drums"], str(out), "wav", FFMPEG,
+                               minus=["bass"], mix=True)
+    assert [Path(p).name for p in saved] == ["드럼.wav", "베이스 제거.wav"]
+    assert sorted(p.name for p in out.iterdir()) == sorted(["드럼.wav", "베이스 제거.wav"])
+
+
 def test_translate_stem_error():
     assert "메모리" in separator.translate_stem_error(RuntimeError("CUDA out of memory"))
     assert "읽을 수 없는" in separator.translate_stem_error(RuntimeError("오디오 디코드 실패: x"))

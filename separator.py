@@ -76,12 +76,14 @@ def separate(
     semitones: int = 0,
     on_progress: ProgressFn | None = None,
     minus: list[str] = (),
+    mix: bool = False,
 ) -> list[str]:
     """input_path 를 분리해 out_dir 에 저장하고, 저장된 파일 경로 목록을 돌려준다.
 
     stems: demucs 이름 목록 (STEM_LABELS 의 키). 저장 순서 = 이 목록 순서.
     fmt:   "wav" | "mp3"
     minus: 빼고 들을 악기(demucs 이름). 악기마다 "<라벨> 제거" 파일을 하나씩 저장한다.
+    mix: True 면 stems 를 더한 파일("드럼+기타")과 minus 를 모두 뺀 파일("보컬+기타 제거")도 저장한다. 각각 2개 이상일 때만.
     """
     if fmt not in ("wav", "mp3"):
         raise ValueError(f"지원하지 않는 포맷: {fmt}")
@@ -142,8 +144,14 @@ def separate(
 
     for name in stems:
         saved.append(save(sources[name], STEM_LABELS[name]))
+    if mix and len(stems) >= 2:
+        saved.append(save(sum(sources[n] for n in stems),
+                          "+".join(STEM_LABELS[n] for n in stems)))
     for name in minus:
         saved.append(save(origin - sources[name], f"{STEM_LABELS[name]} 제거"))
+    if mix and len(minus) >= 2:
+        saved.append(save(origin - sum(sources[n] for n in minus),
+                          "+".join(STEM_LABELS[n] for n in minus) + " 제거"))
 
     report(1.0, f"완료: {len(saved)}개 파일 저장")
     return saved

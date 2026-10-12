@@ -122,6 +122,21 @@ def list_songs(lib: str) -> list[Track]:
     ]
 
 
+def stems_dir(lib: str, song: str) -> str:
+    """<song>_stems 결과 폴더 경로."""
+    return os.path.join(lib, f"{song}{STEMS_SUFFIX}")
+
+
+def fresh_stems_dir(lib: str, song: str) -> str:
+    """'<song> (2)_stems' 처럼 아직 없는 결과 폴더 경로. 2부터 비어 있는 첫 번호를 쓴다."""
+    n = 2
+    while True:
+        path = os.path.join(lib, f"{song} ({n}){STEMS_SUFFIX}")
+        if not os.path.exists(path):
+            return path
+        n += 1
+
+
 def list_tracks(lib: str) -> list[Track]:
     """곡 단위로 묶은 목록. 묶음 = 곡 파일(있으면) + <곡 이름>_stems/ 바로 아래의
     오디오 파일(이름순). 곡 파일 없이 스템 폴더만 있어도 묶음이 된다.

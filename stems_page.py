@@ -59,6 +59,13 @@ LIBRARY_GUIDE_ITEM = "(보관함에서 고르기)"
 LIBRARY_EMPTY_ITEM = "(받은 곡이 없어요)"
 
 
+_CHECKBOX_STYLE = dict(
+    checkbox_width=18, checkbox_height=18, corner_radius=3, border_width=1,
+    border_color="#6B7280", fg_color="#2B2B2B", hover_color="#374151",
+    checkmark_color="#F9FAFB", text_color="#F9FAFB",
+)
+
+
 class StemsPage(ctk.CTkFrame):
     """스템 분리 탭. 입력(파일 or 링크) → separator.separate → 폴더에 저장."""
 
@@ -120,6 +127,11 @@ class StemsPage(ctk.CTkFrame):
             self, text="빼고 듣기는 체크한 악기만 뺀 음원을 따로 저장해요.",
             justify="left", anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
         ).pack(fill="x", padx=20, pady=(0, 0))
+        self.mix_var = ctk.BooleanVar(value=False)
+        self.mix_check = ctk.CTkCheckBox(
+            self, text="체크한 것을 합친 파일도 저장 (드럼+기타.wav 처럼)", variable=self.mix_var,
+            font=ctk.CTkFont(size=13), **_CHECKBOX_STYLE)
+        self.mix_check.pack(anchor="w", padx=20, pady=(8, 0))
 
         opt_row = ctk.CTkFrame(self, fg_color="transparent")
         opt_row.pack(fill="x", padx=20, pady=(10, 0))
@@ -174,9 +186,7 @@ class StemsPage(ctk.CTkFrame):
             variables[name] = var
             ctk.CTkCheckBox(
                 grid, text=STEM_LABELS[name], variable=var,
-                checkbox_width=18, checkbox_height=18, corner_radius=3, border_width=1,
-                border_color="#6B7280", fg_color="#2B2B2B", hover_color="#374151",
-                checkmark_color="#F9FAFB", text_color="#F9FAFB", font=ctk.CTkFont(size=13),
+                font=ctk.CTkFont(size=13), **_CHECKBOX_STYLE,
             ).grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 8), pady=3)
         return grid, variables
 
@@ -260,6 +270,7 @@ class StemsPage(ctk.CTkFrame):
 
         fmt = FORMAT_TO_EXT[self.format_menu.get()]
         semitones = parse_key(self.key_menu.get())
+        mix = self.mix_var.get()
 
         self.app.busy = True
         self.start_btn.configure(state="disabled", text="분리 중...")
@@ -267,11 +278,11 @@ class StemsPage(ctk.CTkFrame):
         self.progress.set(0)
         self.set_status("준비 중...")
         threading.Thread(
-            target=self._worker, args=(src, stems, minus, fmt, semitones), daemon=True,
+            target=self._worker, args=(src, stems, minus, fmt, semitones, mix), daemon=True,
         ).start()
 
     # ── 워커 (별도 스레드) ──
-    def _worker(self, src, stems, minus, fmt, semitones):
+    def _worker(self, src, stems, minus, fmt, semitones, mix):
         stage = "download"
         try:
             lib = self.app.library_dir
@@ -283,12 +294,20 @@ class StemsPage(ctk.CTkFrame):
                 input_path = value
             stage = "separate"
             from separator import separate, translate_stem_error  # 지연 import (torch 로딩)
-            out_dir = os.path.join(lib, f"{Path(input_path).stem}_stems")
+            song = Path(input_path).stem
+            out_dir = library.stems_dir(lib, song)
+            if os.path.isdir(out_dir) and os.listdir(out_dir):
+                answer = self._ask_overwrite(out_dir)
+                if answer is None:
+                    self.app.after(0, self._on_cancel)
+                    return
+                if answer is False:
+                    out_dir = library.fresh_stems_dir(lib, song)
             saved = separate(
                 input_path, stems, out_dir, fmt, self.app.ffmpeg_path, semitones,
                 on_progress=lambda frac, text: self.app.after(
                     0, lambda: (self.progress.set(frac), self.set_status(text))),
-                minus=minus,
+                minus=minus, mix=mix,
             )
             self.app.after(0, lambda: self._on_done(out_dir, saved))
         except Exception as e:
@@ -342,6 +361,35 @@ class StemsPage(ctk.CTkFrame):
         self.app.notify_library_changed()
         names = "\n".join(os.path.basename(p) for p in saved)
         messagebox.showinfo("완료", f"스템 분리가 끝났습니다.\n\n{names}\n\n폴더:\n{out_dir}")
+
+    def _ask_overwrite(self, out_dir: str) -> bool | None:
+        """결과 폴더가 이미 있을 때 묻는다. 예 True(덮어쓰기), 아니오 False(새 폴더), 취소 None.
+        워커 스레드에서 부르면 창은 메인 스레드에서 띄우고 답을 기다린다."""
+        def ask():
+            return messagebox.askyesnocancel(
+                "안내", "결과 폴더가 이미 있어요.\n\n" + os.path.basename(out_dir)
+                + "\n\n예: 덮어쓰기\n아니오: 새 폴더에 저장\n취소: 중단")
+
+        if threading.current_thread() is threading.main_thread():
+            return ask()
+        done = threading.Event()
+        box = {"answer": None}
+
+        def run():
+            try:
+                box["answer"] = ask()
+            finally:
+                done.set()
+
+        self.app.after(0, run)
+        done.wait()
+        return box["answer"]
+
+    def _on_cancel(self):
+        self.app.busy = False
+        self.start_btn.configure(state="normal", text="분리 시작")
+        self.progress.set(0)
+        self.set_status("취소됨")
 
     def _on_error(self, korean_msg: str):
         self.app.busy = False

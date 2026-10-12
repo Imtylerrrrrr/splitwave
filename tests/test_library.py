@@ -357,3 +357,23 @@ def test_index_entry_that_is_not_a_list_is_treated_as_empty(tmp_path):
     path = touch(os.path.join(lib, "song.m4a"))
     library.record_download(lib, "abcdefghijk", [path])
     assert library.find_downloaded(lib, "abcdefghijk") == [os.path.abspath(path)]
+
+
+def test_stems_dir_and_fresh_stems_dir(tmp_path):
+    lib = str(tmp_path)
+    assert library.stems_dir(lib, "곡") == os.path.join(lib, "곡_stems")
+    assert library.fresh_stems_dir(lib, "곡") == os.path.join(lib, "곡 (2)_stems")
+    os.makedirs(os.path.join(lib, "곡_stems"))
+    os.makedirs(os.path.join(lib, "곡 (2)_stems"))
+    fresh = library.fresh_stems_dir(lib, "곡")
+    assert fresh == os.path.join(lib, "곡 (3)_stems")
+    assert not os.path.exists(fresh)
+
+
+def test_list_tracks_groups_numbered_stems_dir(tmp_path):
+    lib = str(tmp_path)
+    os.makedirs(os.path.join(lib, "곡 (2)_stems"))
+    touch(os.path.join(lib, "곡 (2)_stems", "드럼.wav"))
+    tracks = library.list_tracks(lib)
+    assert any(t.song == "곡 (2)" and t.stem == "드럼" and t.label == "곡 (2) / 드럼"
+               for t in tracks)
