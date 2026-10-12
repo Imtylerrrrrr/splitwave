@@ -24,11 +24,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build key (ffmpeg source version + build script + msys2 packages)
+        id: key
+        shell: bash
+        run: echo "key=$(git hash-object tools/ffmpeg/build.sh tools/ffmpeg/msys2-packages.txt | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@v4
         id: cache
         with:
           path: tools/ffmpeg/out/ffmpeg.exe
           key: ffmpeg-audio-${{ hashFiles('tools/ffmpeg/build.sh', 'tools/ffmpeg/msys2-packages.txt') }}
+
+      # 같은 입력으로 빌드한 ffmpeg 를 지난 릴리스에서 다시 쓴다. 캐시는 7일 안 쓰면 지워지고
+      # 빌드는 바이트 단위로 재현되지 않아서, 안 그러면 릴리스마다 실행 환경 묶음(22 MB)이 바뀐다.
+      # package 작업이 release/ffmpeg-audio-<key>.exe 로 올려 둔다. 아래 smoke test 는 재사용한 파일에도 돈다
+      - name: Reuse ffmpeg from the latest release (same build inputs)
+        id: reuse
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p tools/ffmpeg/out
+          name="ffmpeg-audio-${{ steps.key.outputs.key }}.exe"
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern "$name" --output tools/ffmpeg/out/ffmpeg.exe; then
+            echo "found=true" >> "$GITHUB_OUTPUT"; echo "reused $name from the latest release"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"; echo "no $name in the latest release: building"
+          fi
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -37,7 +60,7 @@ jobs:
           install: python mingw-w64-x86_64-binutils
 
       - name: Build audio-only ffmpeg
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && steps.reuse.outputs.found != 'true'
         shell: msys2 {0}
         run: |
           pacman -S --noconfirm --needed $(tr -d '\r' < tools/ffmpeg/msys2-packages.txt)
@@ -65,7 +88,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
 
       - name: Install dependencies
         run: |
@@ -117,7 +140,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
 
       - name: Install dependencies (with demucs + torch CPU)
         run: |
@@ -227,7 +250,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
 
       - name: Install dependencies
         run: |
@@ -282,7 +305,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
 
       - name: Install dependencies
         run: |
@@ -329,16 +352,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
 
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Build key (ffmpeg source version + build script + msys2 packages)
+        id: key
+        shell: bash
+        run: echo "key=$(git hash-object tools/ffmpeg/build.sh tools/ffmpeg/msys2-packages.txt | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
       - name: Collect release files and build manifest
         shell: pwsh
         run: |
           New-Item -ItemType Directory release | Out-Null
+          Copy-Item artifacts\ffmpeg-audio\ffmpeg.exe "release\ffmpeg-audio-${{ steps.key.outputs.key }}.exe"   # 다음 릴리스의 build-ffmpeg 가 재사용
           Copy-Item artifacts\splitwave-lite-exe\splitwave.exe release\
           Copy-Item artifacts\splitwave-full-zip\splitwave-full.zip release\
           Copy-Item artifacts\tempofollow-zip\tempofollow.zip release\
@@ -352,6 +381,7 @@ jobs:
           Get-ChildItem release | Select-Object Name, Length
           Get-Content release\manifest.json
           Get-Content release\SHA256SUMS.txt
+          Get-Content release\manifest.json    # 묶음 content 해시를 지난 릴리스와 비교할 때 본다
 
       - name: End-to-end (built hub installs, runs and removes built apps)
         shell: pwsh
